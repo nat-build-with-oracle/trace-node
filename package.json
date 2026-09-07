@@ -1,0 +1,20 @@
+{
+  "name": "trace-node",
+  "version": "26.9.7",
+  "forkedFrom": "Soul-Brews-Studio/digger-node@ff5b5cd",
+  "private": true,
+  "type": "module",
+  "description": "digger-node's Drupal-shaped content store (nodes, taxonomy, MCP, OAuth for claude.ai) plus a trace layer, on Bun + Elysia + bun:sqlite.",
+  "scripts": {
+    "test": "bun test ./test",
+    "typecheck": "tsc --noEmit",
+    "serve": "bun src/server.ts"
+  },
+  "dependencies": {
+    "elysia": "^1.4.29"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "^5.9.0"
+  }
+}

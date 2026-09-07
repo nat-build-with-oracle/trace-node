@@ -1,0 +1,16 @@
+# Keeps `docker build` (context = this directory, see ../haos/11-trace_node's
+# Dockerfile and the lab justfile's `build` recipe) from tarring up things the
+# image never needs — node_modules alone is ~276 MB of host-arch binaries the
+# image reinstalls for itself with `bun install --production`.
+node_modules
+test
+docs
+scripts
+.perf
+README.md
+DESIGN.md
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+.git

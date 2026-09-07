@@ -1,0 +1,25 @@
+-- Store credentials as hashes, not as the credentials themselves.
+--
+-- 0003 stored the authorization code and the access token in the clear, which
+-- means any read access to this database — a console session, a backup, a
+-- `SELECT` through an injection in some unrelated query, an accidental dump into
+-- a log — hands over live credentials that can be replayed directly against
+-- /mcp. The token IS the secret; a row containing it is as sensitive as the
+-- session it opens.
+--
+-- After this migration the columns hold `sha256(credential)`, base64url. The
+-- plaintext exists exactly twice: in the response that hands it to the client,
+-- and in the Authorization header the client sends back. Verification hashes
+-- the presented value and looks up by that, so a stolen database yields
+-- something that cannot be presented as a bearer token.
+--
+-- The columns are RENAMED rather than reused under their old names, because
+-- `WHERE token = ?` and `WHERE token_hash = ?` mean different things and a
+-- column called `token` holding a digest is exactly the sort of quiet lie that
+-- survives into the next reader's assumptions. Renaming makes any statement
+-- this migration missed fail loudly at once instead.
+--
+-- Safe as a rename rather than a rebuild: both tables hold only in-flight
+-- credentials, and no deployment had OAuth switched on before this shipped.
+ALTER TABLE oauth_codes  RENAME COLUMN code  TO code_hash;
+ALTER TABLE oauth_tokens RENAME COLUMN token TO token_hash;

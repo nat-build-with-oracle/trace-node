@@ -1,0 +1,10 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+wrangler.local.jsonc
+.lancedb/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env

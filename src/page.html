@@ -1,0 +1,1593 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__INSTANCE__ · trace-node</title>
+
+<!--
+  This is a real .html file, imported by page.ts as text.
+
+  It used to be a TypeScript template literal, and that cost a production bug:
+  a literal \n written inside the client JS became an ACTUAL newline when the
+  template was evaluated, cutting a JS string in half. Every route still
+  answered 200 and the page was inert. The workaround was NL =
+  String.fromCharCode(10), which worked and was a splint on a broken bone —
+  and it would have broken again the moment client code needed a backtick,
+  which is exactly what htm's tagged templates need.
+
+  So the client lives here instead, where a backtick is a backtick.
+-->
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // The palette is CSS custom properties, not Tailwind literals, so the
+  // light/dark swap stays one media query instead of a `dark:` prefix on every
+  // element. Tailwind just names them.
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ground: "var(--ground)", panel: "var(--panel)", line: "var(--line)",
+          ink: "var(--ink)", dim: "var(--dim)", ember: "var(--ember)",
+          sage: "var(--sage)", clay: "var(--clay)", chip: "var(--chip)",
+        },
+        fontFamily: {
+          sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+          // The reading voice. Node titles and bodies are the one thing on this
+          // page a HUMAN wrote, so they get a text face rather than the UI sans.
+          read: ["Iowan Old Style", "Palatino Linotype", "Palatino", "Georgia", "serif"],
+          mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        },
+        borderRadius: { cozy: "14px" },
+        boxShadow: {
+          // Offset and soft blur, tinted warm. A zero-offset halo is decoration.
+          lamp: "0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45)",
+        },
+      },
+    },
+  };
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+
+<style>
+  /*
+    Warm, lamp-lit. The old palette was blue-black with a cyan accent — a
+    monitoring dashboard for a server you do not love. The actual scene here is
+    one person writing into their own corpus, often at night, so the ground is a
+    warm charcoal and the accent is an ember rather than a status LED.
+
+    Dark is the DEFAULT, picked from that scene rather than from category habit.
+  */
+  :root {
+    --ground:#16130f; --panel:#1e1a15; --line:#312a22; --ink:#efe7da;
+    --dim:#a99e8d;            /* tinted from the ground's hue — never gray */
+    --ember:#e0a458; --sage:#8fbf7f; --clay:#e58e7c; --chip:#272019;
+    --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(224,164,88,.10), transparent 70%);
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground:#f7f2e7; --panel:#fffdf8; --line:#e6dcc8; --ink:#2b2419;
+      --dim:#6f6453; --ember:#a2621d; --sage:#4f7d43; --clay:#a5482f; --chip:#f1e9d9;
+      --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(162,98,29,.07), transparent 70%);
+      color-scheme: light;
+    }
+  }
+
+  body { background: var(--lamp), var(--ground); background-attachment: fixed; }
+
+  /*
+    The surfaces nobody draws. Selection, caret, scrollbar and focus ring all
+    ship with browser defaults that belong to no design system; theming them is
+    the cheapest signal that a page was built rather than assembled.
+  */
+  ::selection { background: color-mix(in oklab, var(--ember) 30%, transparent); color: var(--ink); }
+  input, textarea, select { caret-color: var(--ember); }
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; border: 3px solid transparent; background-clip: content-box; }
+  *::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--ember) 45%, var(--line)); background-clip: content-box; }
+  :focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; border-radius: 4px; }
+  a { text-underline-offset: 3px; }
+
+  /* One authored moment: rows settle in. Exponential ease-out from an
+     already-visible default, so nothing is invisible if motion is refused. */
+  @keyframes settle { from { opacity:.001; transform: translateY(5px); } to { opacity:1; transform:none; } }
+  .settle { animation: settle .34s cubic-bezier(.16,1,.3,1) both; }
+  @media (prefers-reduced-motion: reduce) { .settle { animation: none; } }
+
+  details.yaml > summary { list-style: none; cursor: pointer; }
+  details.yaml > summary::-webkit-details-marker { display: none; }
+  details.yaml > summary::before { content: "▸ "; color: var(--dim); }
+  details.yaml[open] > summary::before { content: "▾ "; }
+</style>
+</head>
+
+<body class="m-0 font-sans text-[14px] leading-relaxed text-ink antialiased">
+<div id="root"></div>
+
+<script>
+const { createElement, useState, useEffect, useCallback, useMemo, useRef, Fragment } = React;
+const html = htm.bind(createElement);
+const NL = "\n";
+
+// ── plumbing ─────────────────────────────────────────────────────────────────
+// Substituted by the server. Empty on a normal deploy; under Home Assistant
+// ingress it is "/api/hassio_ingress/<token>", and every request below has to
+// carry it or it resolves against Home Assistant instead of this app.
+//
+// It is prefixed here, in ONE place, rather than at ~20 call sites — the call
+// sites keep reading as the routes they are.
+const BASE = "__BASE__";
+// Every request from this page says so: the gate refuses a mutating /api/*
+// call that arrives with a cookie or ingress session but without this header,
+// which is what stops a cross-origin form on the same HA origin from acting
+// as the signed-in owner. A cross-site form cannot set a custom header.
+const j = async (url, opts) => {
+  opts = { ...(opts || {}), headers: { "x-trace-client": "ui", ...((opts && opts.headers) || {}) } };
+  const response = await fetch(BASE + url, opts);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.message || body?.error || ("HTTP " + response.status));
+  return body;
+};
+const post = (url, data) =>
+  j(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
+
+const when = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+
+// ── the call log, as YAML ────────────────────────────────────────────────────
+// A double-encoded JSON string in a table cell is unreadable by a human, which
+// defeats the point of having a call log at all.
+function toYaml(value, indent) {
+  indent = indent || 0;
+  const pad = "  ".repeat(indent);
+  if (value === null) return "~";
+  if (Array.isArray(value)) {
+    if (!value.length) return "[]";
+    return value.map((item) => {
+      const rendered = toYaml(item, indent + 1);
+      return rendered.includes(NL) ? pad + "-" + NL + rendered : pad + "- " + rendered.trim();
+    }).join(NL);
+  }
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value);
+    if (!keys.length) return "{}";
+    return keys.map((key) => {
+      const child = value[key];
+      const branch = child && typeof child === "object";
+      const rendered = toYaml(child, indent + 1);
+      return branch && rendered.includes(NL)
+        ? pad + key + ":" + NL + rendered
+        : pad + key + ": " + String(rendered).trim();
+    }).join(NL);
+  }
+  const text = String(value);
+  return text.includes(NL) ? text.split(NL).map((l) => pad + l).join(NL).trim() : text;
+}
+const tryParse = (raw) => {
+  if (typeof raw !== "string") return raw;
+  const t = raw.trim();
+  if (!t.startsWith("{") && !t.startsWith("[")) return undefined;
+  try { return JSON.parse(t); } catch { return undefined; }
+};
+function summarise(raw) {
+  const parsed = tryParse(raw);
+  if (parsed === undefined) return raw && raw.length > 60 ? raw.slice(0, 60) + "…" : raw;
+  if (parsed && typeof parsed === "object") {
+    if (Array.isArray(parsed.nodes)) return parsed.nodes.length + " node(s)" + (parsed.mode ? " · " + parsed.mode : "");
+    if (Array.isArray(parsed.calls)) return parsed.calls.length + " call(s)";
+    if (Array.isArray(parsed.types)) return parsed.types.length + " type(s) · " + parsed.policy;
+    if (Array.isArray(parsed.terms) && !parsed.id) return parsed.terms.length + " term(s)";
+    if (parsed.title) return parsed.title;
+    if (parsed.deleted) return "deleted " + parsed.deleted;
+    return Object.keys(parsed).slice(0, 3).map((k) => k + "=" + JSON.stringify(parsed[k])).join(" ").slice(0, 70);
+  }
+  return String(parsed).slice(0, 70);
+}
+
+/**
+ * Size a tag by usage on a LOG scale.
+ *
+ * Linear sizing looks right until one tag runs away: with counts of 1 and 40 it
+ * makes every other tag identically tiny and the cloud stops carrying
+ * information. Log compresses the tail, which is why clouds have always used it.
+ */
+const cloudSize = (usage, max) =>
+  !max || usage <= 0 ? 11 : (11 + (Math.log(1 + usage) / Math.log(1 + max)) * 9).toFixed(1);
+
+// ── routing ──────────────────────────────────────────────────────────────────
+// Selection lives in the URL, so a filtered view is shareable and survives a
+// reload: #/terms/id1,id2/all
+//
+// The gate-1b views (PRD §3.7, §8.1b) are routes too: #/trace/<kw>,
+// #/categories, #/category/<id>, #/dig[/<kw>], #/traces. A malformed percent
+// escape in the hash must not take the whole page down, so decoding never throws.
+const VIEW_ROUTES = ["trace", "categories", "category", "dig", "traces"];
+const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+function readRoute() {
+  const parts = location.hash.slice(2).split("/");
+  const kind = parts[0] || "";
+  if (kind === "terms" && parts[1]) {
+    return { kind, terms: dec(parts[1]).split(",").filter(Boolean),
+             match: parts[2] === "all" ? "all" : "any" };
+  }
+  return { kind, terms: [], match: "any", value: dec(parts.slice(1).join("/") || "") };
+}
+
+// ── shared bits ──────────────────────────────────────────────────────────────
+// `view` stamps data-view="…" on the section — the marker `just pages` and the
+// page tests look for, one per gate-1b view.
+const Panel = ({ title, action, children, className, view }) => html`
+  <section data-view=${view} class=${"rounded-cozy border border-line bg-panel px-5 pb-5 pt-4 shadow-lamp " + (className || "")}>
+    <h2 class="mb-3 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-[.1em] text-dim">
+      <span>${title}</span>${action}
+    </h2>
+    ${children}
+  </section>`;
+
+const Field = ({ label, children }) => html`
+  <label class="grid gap-1 text-[11px] text-dim">${label}${children}</label>`;
+
+const inputCls =
+  "rounded-lg border border-line bg-ground px-3 py-2 text-[14px] text-ink " +
+  "placeholder:text-dim/70 focus:border-ember/60 focus-visible:outline-none " +
+  "focus:ring-2 focus:ring-ember/25 transition-colors";
+
+const Empty = ({ children }) => html`<p class="py-3 text-dim">${children}</p>`;
+
+const msgCls = (m) =>
+  "min-h-4 text-[12px] " + (m?.kind === "bad" ? "text-clay" : m?.kind === "ok" ? "text-sage" : "text-dim");
+
+// The 24h / 7d / all switch every windowed view wears (the cloud's is inline
+// above, unchanged — parity table §3.7).
+const WindowToggle = ({ value, onChange, windows }) => html`
+  <span class="flex gap-1">
+    ${(windows || ["24h", "7d", "all"]).map((w) => html`
+      <button key=${w} type="button" onClick=${() => onChange(w)} aria-pressed=${value === w}
+              class=${"rounded-md border px-2 py-1 text-[11px] font-normal normal-case tracking-normal transition " +
+                (value === w ? "border-ember/70 bg-ember/15 text-ember" : "border-line text-dim hover:border-ember/60 hover:text-ember")}>
+        ${w}
+      </button>`)}
+  </span>`;
+
+// An ISO instant for `since=` on /api/traces; "" means no cutoff.
+const sinceIso = (w) =>
+  w === "24h" ? new Date(Date.now() - 864e5).toISOString()
+  : w === "7d" ? new Date(Date.now() - 7 * 864e5).toISOString()
+  : "";
+
+// days[] from trace_days, as bars. Survives eviction of the raw rows (PRD
+// §3.3), which is the point of drawing the buckets rather than the rows.
+const Sparkline = ({ days }) => {
+  if (!days || !days.length) return html`<p class="m-0 text-[11px] text-dim">No day buckets in this window.</p>`;
+  const max = days.reduce((m, d) => Math.max(m, Number(d.reads) || 0), 0) || 1;
+  return html`
+    <div class="flex h-10 items-end gap-px" role="img" aria-label=${days.length + " day bucket(s)"}>
+      ${days.map((d) => html`
+        <span key=${d.day} title=${d.day + " · " + Number(d.reads).toFixed(1) + " read(s) · " + d.hits + " hit(s)"}
+              class="w-2 rounded-sm bg-sage/70"
+              style=${{ height: Math.max(2, Math.round((Number(d.reads) / max) * 40)) + "px" }}></span>`)}
+    </div>`;
+};
+
+// {kind: n} → chips. A trace report carries two of these (by_kind, by_method).
+const Chips = ({ map, tone }) => Object.entries(map || {}).map(([k, v]) => html`
+  <span key=${k} class=${"rounded-full px-2 py-0.5 text-[11px] " + (tone === "sage" ? "bg-sage/15" : "bg-chip")}>
+    ${k}<span class="ml-1 tabular-nums opacity-60">${v}</span>
+  </span>`);
+
+const who = (r) => (r.method || "") + (r.principal ? ":" + r.principal : "") + (r.ha_user ? " (" + r.ha_user + ")" : "");
+
+// friction: high = easy to find. "Low score is a signal, not a failure" (§3.6).
+const frictionCls = (f) => f >= 0.7 ? "bg-sage/20 text-sage" : f >= 0.3 ? "bg-ember/20 text-ember" : "bg-clay/20 text-clay";
+
+// ── the app ──────────────────────────────────────────────────────────────────
+function App() {
+  const [route, setRoute] = useState(readRoute);
+  const [health, setHealth] = useState(null);
+  const [tax, setTax] = useState({ vocabularies: [], terms: [] });
+  const [types, setTypes] = useState({ policy: "free", types: [] });
+  const [stats, setStats] = useState(null);
+  const [untagged, setUntagged] = useState(0);
+  const [nodes, setNodes] = useState(null);
+  const [heading, setHeading] = useState("Content");
+  const [calls, setCalls] = useState(null);
+  // The search box is a DRAFT: typing never fetches. A submit (Enter, or the
+  // mode select — both deliberate) commits the draft into `query`, and only
+  // `query` reaches /api/nodes?q= — which the server traces as kind='search'
+  // (PRD §3.7: "a submit is traced"; §3.1: no suppression header exists). The
+  // 1a wiring inherited from digger-node fetched on every keystroke, so a
+  // search for "mcp" left "m", "mc", "mcp" in the log and the cloud, each to
+  // be forgotten separately. §3.7's "searches debounce 400 ms" is read the
+  // strict way (pre-ruling 8): a second submit of the same text inside 400 ms
+  // is dropped, and nothing short of a submit fetches at all.
+  const SEARCH_DEBOUNCE_MS = 400;
+  const [q, setQ] = useState("");        // the box
+  const [query, setQuery] = useState(""); // the committed search
+  const lastSubmit = useRef({ text: "", at: 0 });
+  const [mode, setMode] = useState("text");
+  const [taxOpen, setTaxOpen] = useState(false);
+  const [formMsg, setFormMsg] = useState(null);
+  const [taxMsg, setTaxMsg] = useState(null);
+  const [events, setEvents] = useState(null);
+  const [view, setView] = useState("content");
+  const [lockOpen, setLockOpen] = useState(false);
+  const [lockMsg, setLockMsg] = useState(null);
+  const [lockInfo, setLockInfo] = useState(null);
+  const [vocabs, setVocabs] = useState([]);
+  const [setMsg, setSetMsg] = useState(null);
+  const [access, setAccess] = useState(null);
+  const [clients, setClients] = useState(null);
+  const [since, setSince] = useState("24h");
+  const [accessMsg, setAccessMsg] = useState(null);
+  // The one by=all cloud (PRD §3.5, §3.7): terms, categories and searched
+  // keywords on one scale. /api/cloud is untraced by construction, so the
+  // page may poll it freely; the window is a view choice, kept in localStorage
+  // under the shared-origin prefix.
+  const [cloud, setCloud] = useState(null);
+  const [cloudWindow, setCloudWindow] = useState(() => {
+    try { return localStorage.getItem("__tn_cloud_window") || "7d"; } catch { return "7d"; }
+  });
+
+  // ── the gate-1b views (PRD §3.7) ──
+  // Each view's data is fetched only while its route is open: a trace is a
+  // read OF the log (never traced, so re-reading it is free), but a category
+  // browse and a dig are intents and ARE traced — so they fire once per route
+  // change and never from a poll.
+  const [trace, setTrace] = useState(null);
+  const [traceWindow, setTraceWindow] = useState("all");
+  const [catMenu, setCatMenu] = useState(null);
+  const [category, setCategory] = useState(null);
+  const [digResult, setDigResult] = useState(null);
+  const [digHistory, setDigHistory] = useState(null);
+  const [digMsg, setDigMsg] = useState(null);
+  const [tracesList, setTracesList] = useState(null);
+  const [tracesWindow, setTracesWindow] = useState(() => {
+    try { return localStorage.getItem("__tn_traces_window") || "24h"; } catch { return "24h"; }
+  });
+  const [traceTail, setTraceTail] = useState(null);
+  const [forgetMsg, setForgetMsg] = useState(null);
+
+  const selected = useMemo(() => new Set(route.terms || []), [route.terms]);
+  // Settings is configuration, not a third view of the corpus — so it is a route
+  // of its own rather than a third segment in the content/timeline toggle.
+  const settingsOpen = route.kind === "settings";
+  const viewKind = VIEW_ROUTES.includes(route.kind) ? route.kind : null;
+
+  // Access is loaded only when the settings route is open, and re-loaded when
+  // the window changes. Polling it from the main view would make the ledger
+  // count its own page as a caller, over and over. The /api/traces tail rides
+  // along: owner-session and api-token only, so a 403 here is a fact to show,
+  // not an error to hide.
+  const loadAccess = useCallback(async () => {
+    const [a, c, t] = await Promise.all([
+      j("/api/connections?since=" + since).catch(() => null),
+      j("/api/clients").catch(() => ({ clients: [] })),
+      j("/api/traces?limit=10").then((d) => ({ traces: d.traces || [] })).catch((e) => ({ error: e.message, traces: [] })),
+    ]);
+    setAccess(a);
+    setClients((c && c.clients) || []);
+    setTraceTail(t);
+  }, [since]);
+
+  useEffect(() => { if (settingsOpen) loadAccess(); }, [settingsOpen, loadAccess]);
+
+  // #/trace/<kw> — the timeline of one keyword, from /api/trace.
+  useEffect(() => {
+    if (route.kind !== "trace") return;
+    setTrace(null);
+    if (!route.value) return;
+    j("/api/trace?q=" + encodeURIComponent(route.value) + "&window=" + traceWindow + "&limit=200")
+      .then(setTrace).catch((e) => setTrace({ error: e.message }));
+  }, [route.kind, route.value, traceWindow]);
+
+  // #/categories — the menu; #/category/<id> — one entry with its breadcrumb.
+  useEffect(() => {
+    if (route.kind !== "categories") return;
+    setCatMenu(null);
+    j("/api/categories").then(setCatMenu).catch((e) => setCatMenu({ error: e.message, vocabularies: [] }));
+  }, [route.kind]);
+  useEffect(() => {
+    if (route.kind !== "category") return;
+    setCategory(null);
+    if (!route.value) return;
+    j("/api/categories/" + encodeURIComponent(route.value) + "?limit=50")
+      .then(setCategory).catch((e) => setCategory({ error: e.message }));
+  }, [route.kind, route.value]);
+
+  // #/dig[/<kw>] — prior digs from /api/digs (untraced); the dig itself only
+  // ever runs from the button, never from landing on the route: a POST that
+  // fired on every reload would mint a dig — and a trace row — per visit.
+  const loadDigs = useCallback(async (kw) => {
+    setDigHistory(null);
+    try {
+      const d = await j("/api/digs?limit=30" + (kw ? "&q=" + encodeURIComponent(kw) : ""));
+      setDigHistory(d.digs || []);
+    } catch { setDigHistory([]); }
+  }, []);
+  useEffect(() => { if (route.kind === "dig") loadDigs(route.value); }, [route.kind, route.value, loadDigs]);
+
+  const runDig = async (raw) => {
+    const kw = (raw || "").trim();
+    if (!kw) return;
+    setDigMsg({ kind: "dim", text: "digging “" + kw + "”…" });
+    try {
+      const bundle = await post("/api/dig", { q: kw, window: "all" });
+      setDigResult({ for: kw, bundle });
+      setDigMsg(null);
+      const target = "#/dig/" + encodeURIComponent(kw);
+      if (location.hash === target) loadDigs(kw); else location.hash = target;
+      loadSide(); // a dig is a trace: the timeline and the cloud move
+    } catch (e) {
+      setDigMsg({ kind: "bad", text: e.message });
+    }
+  };
+
+  // #/traces — the raw log page with a window (owner-session / api-token).
+  useEffect(() => {
+    if (route.kind !== "traces") return;
+    try { localStorage.setItem("__tn_traces_window", tracesWindow); } catch {}
+    setTracesList(null);
+    const cutoff = sinceIso(tracesWindow);
+    j("/api/traces?limit=200" + (cutoff ? "&since=" + encodeURIComponent(cutoff) : ""))
+      .then((d) => setTracesList({ traces: d.traces || [] }))
+      .catch((e) => setTracesList({ error: e.message, traces: [] }));
+  }, [route.kind, tracesWindow]);
+
+  // Settings: "forget keyword" — DELETE /api/trace?q= (PRD §3.3, §3.10). The
+  // one path that drops a label the log would otherwise keep forever, so it
+  // confirms and names what goes.
+  const forget = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const kw = f.kw.value.trim();
+    if (!kw) return;
+    if (!confirm("Forget “" + kw + "”?" + NL + NL +
+                 "Its trace rows, day buckets and digs are deleted and the label is dropped from the cloud. " +
+                 "It can be sought again afterwards; the history cannot be recovered.")) return;
+    setForgetMsg({ kind: "dim", text: "forgetting…" });
+    try {
+      const r = await j("/api/trace?q=" + encodeURIComponent(kw), { method: "DELETE" });
+      f.reset();
+      setForgetMsg({ kind: "ok", text: "Forgot “" + r.forgot + "”: " + r.rows.traces + " trace(s), " +
+                                       r.rows.trace_days + " day bucket(s), " + r.rows.digs + " dig(s)." });
+      await Promise.all([loadAccess(), loadSide()]);
+    } catch (err) {
+      setForgetMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  // "Revoke all connectors" — DELETE /api/clients (PRD §3.3, §6.5 rotation).
+  // Registrations stay; every token and pending code dies; the browser session
+  // is not a connector and survives. Confirmed, because the only way back for
+  // each client is the whole consent flow.
+  const revokeAll = async () => {
+    const live = (clients || []).filter((c) => c.authorized).length;
+    if (!confirm("Revoke every connector?" + NL + NL +
+                 live + " client(s) hold a live token. Every OAuth token and pending code stops working on its next " +
+                 "request; registrations are kept, so each client reconnects only by going through consent again. " +
+                 "This browser session is not a connector and stays signed in.")) return;
+    try {
+      const r = await j("/api/clients", { method: "DELETE" });
+      setAccessMsg({ kind: "ok", text: "Revoked all: " + r.tokens + " token(s), " + r.codes + " pending code(s); " +
+                                       r.clients + " registration(s) kept." });
+      await loadAccess();
+    } catch (e) {
+      setAccessMsg({ kind: "bad", text: e.message });
+    }
+  };
+
+  // Revoking is destructive and irreversible for that client — it must re-run
+  // the whole consent flow — so it asks first and names what it is cutting off.
+  const revokeClient = async (id, name) => {
+    if (!confirm("Revoke " + (name || id) + "?" + NL + NL +
+                 "Its tokens stop working on the next request. It can reconnect only by going through consent again.")) return;
+    try {
+      await j("/api/clients/" + encodeURIComponent(id), { method: "DELETE" });
+      setAccessMsg({ kind: "ok", text: "Revoked " + (name || id) + "." });
+      await loadAccess();
+    } catch (e) {
+      setAccessMsg({ kind: "err", text: e.message });
+    }
+  };
+
+  useEffect(() => {
+    const onHash = () => setRoute(readRoute());
+    addEventListener("hashchange", onHash);
+    return () => removeEventListener("hashchange", onHash);
+  }, []);
+
+  // Refetched whenever the sidebar reloads (events move on every refresh) or
+  // the window changes — a search just made shows up in the cloud at once.
+  useEffect(() => {
+    try { localStorage.setItem("__tn_cloud_window", cloudWindow); } catch {}
+    j("/api/cloud?window=" + cloudWindow + "&by=all&limit=60").then(setCloud).catch(() => setCloud(null));
+  }, [cloudWindow, events]);
+
+  const loadSide = useCallback(async () => {
+    const [h, t, ty, s, c] = await Promise.all([
+      j("/api/health").catch(() => null),
+      j("/api/terms").catch(() => ({ terms: [] })),
+      j("/api/types").catch(() => ({ policy: "free", types: [] })),
+      j("/api/stats").catch(() => null),
+      j("/api/calls?limit=25").catch(() => ({ calls: [] })),
+    ]);
+    // The untagged count is its own query — /api/stats does not carry one.
+    j("/api/nodes?untagged=1").then((d) => setUntagged(d.count || 0)).catch(() => setUntagged(0));
+    j("/api/timeline?limit=60").then((d) => setEvents(d.events || [])).catch(() => setEvents([]));
+    j("/api/passphrase").then(setLockInfo).catch(() => setLockInfo(null));
+    const v = await j("/api/vocabularies").catch(() => ({ vocabularies: [] }));
+    setHealth(h); setTypes(ty); setStats(s); setCalls(c.calls || []);
+    setTax({ vocabularies: v.vocabularies || [], terms: t.terms || [] });
+    setVocabs(v.vocabularies || []);
+  }, []);
+
+  const loadNodes = useCallback(async () => {
+    setNodes(null);
+    try {
+      if (route.kind === "settings") { setHeading("Content"); return setNodes([]); }
+      // A view route owns the main column; the node list is not fetched
+      // underneath it (and a lingering search box query is not re-traced).
+      if (VIEW_ROUTES.includes(route.kind)) { setHeading("Content"); return setNodes([]); }
+      if (route.kind === "untagged") {
+        const d = await j("/api/nodes?untagged=1");
+        setHeading("Untagged · " + d.count + " waiting to be classified");
+        return setNodes(d.nodes);
+      }
+      if (query) {
+        const d = await j("/api/nodes?q=" + encodeURIComponent(query) + "&mode=" + mode);
+        setHeading("“" + query + "” · " + d.count + " hit(s) · " + (d.mode || mode));
+        return setNodes(d.nodes);
+      }
+      if (selected.size) {
+        const ids = [...selected].join(",");
+        const d = await j("/api/nodes?term_ids=" + encodeURIComponent(ids) + "&match=" + route.match);
+        setHeading(selected.size + " tag(s) · " + route.match + " · " + d.count);
+        return setNodes(d.nodes);
+      }
+      const d = await j("/api/nodes");
+      setHeading("Content");
+      setNodes(d.nodes);
+    } catch (e) {
+      setHeading("Content");
+      setNodes([]);
+      setFormMsg({ kind: "bad", text: e.message });
+    }
+  }, [route.kind, route.match, query, mode, selected]);
+
+  useEffect(() => { loadSide(); }, [loadSide]);
+  useEffect(() => { loadNodes(); }, [loadNodes]);
+
+  // The one door from the box to /api/nodes?q=. Same text again inside
+  // SEARCH_DEBOUNCE_MS is dropped (a double Enter is one search); the same
+  // text after that re-runs it (a repeat is a search too — same label, one
+  // more row); new text commits and the effect above fetches it once.
+  const submitSearch = (e) => {
+    e.preventDefault();
+    const text = q.trim();
+    const now = Date.now();
+    if (text === lastSubmit.current.text && now - lastSubmit.current.at < SEARCH_DEBOUNCE_MS) return;
+    lastSubmit.current = { text, at: now };
+    if (text === query) { if (text) loadNodes(); } else setQuery(text);
+  };
+  // Emptying the box drops the committed search and shows the plain list
+  // (/api/nodes without q — untraced), so the results never outlive the text.
+  const onSearchInput = (e) => {
+    setQ(e.target.value);
+    if (!e.target.value.trim()) setQuery("");
+  };
+
+  const refresh = async () => { await Promise.all([loadSide(), loadNodes()]); };
+
+  const toggleTerm = (id) => {
+    const next = new Set(selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    location.hash = next.size
+      ? "#/terms/" + encodeURIComponent([...next].join(",")) + "/" + route.match
+      : "#/";
+  };
+
+  const maxUsage = useMemo(
+    () => (tax.terms || []).reduce((m, t) => Math.max(m, Number(t.usage) || 0), 0),
+    [tax.terms],
+  );
+
+  // ── create ──
+  const onCreate = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const title = f.title_.value.trim();
+    if (!title) return;
+    const type = (f.type_free.value.trim() || f.type_select.value || "note");
+    setFormMsg({ kind: "dim", text: "saving…" });
+    try {
+      await post("/api/nodes", { title, body: f.body_.value, type });
+      f.reset();
+      setFormMsg({ kind: "ok", text: "Saved. An agent will classify it." });
+      await refresh();
+    } catch (err) {
+      setFormMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  const onTaxonomy = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const name = f.v_name.value.trim();
+    if (!name) return;
+    setTaxMsg({ kind: "dim", text: "saving…" });
+    try {
+      await post("/api/vocabularies", { name, kind: f.v_kind.value });
+      if (f.t_name.value.trim()) {
+        await post("/api/terms", {
+          vocabulary: name, name: f.t_name.value.trim(), weight: Number(f.t_weight.value) || 0,
+        });
+      }
+      f.reset();
+      setTaxMsg({ kind: "ok", text: "Created." });
+      await loadSide();
+    } catch (err) {
+      setTaxMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  const del = async (id) => {
+    try { await j("/api/nodes/" + id, { method: "DELETE" }); await refresh(); }
+    catch (err) { setFormMsg({ kind: "bad", text: err.message }); }
+  };
+
+  /**
+   * The server refuses an unknown content type and tells you how to allow it —
+   * `term_create{vocabulary:"type"}` — which is an MCP call a person reading the
+   * web form cannot make. The form offered "or new type" and then bounced it,
+   * which is an invitation the product could not honour. This turns the refusal
+   * into the button it was describing.
+   */
+  const refusedType = useMemo(() => {
+    const m = /^"(.+?)" is not an allowed content type/.exec(formMsg?.text || "");
+    return formMsg?.kind === "bad" && m ? m[1] : null;
+  }, [formMsg]);
+
+  const allowType = async (name) => {
+    setFormMsg({ kind: "dim", text: "allowing “" + name + "”…" });
+    try {
+      await post("/api/terms", { vocabulary: "type", name });
+      setFormMsg({ kind: "ok", text: "“" + name + "” is now an allowed type. Create the node again." });
+      await loadSide();
+    } catch (err) {
+      setFormMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  const dropVocabulary = async (name) => {
+    setSetMsg({ kind: "dim", text: "checking what that would cost…" });
+    try {
+      const impact = await j("/api/vocabularies/" + encodeURIComponent(name) + "/impact");
+      const cost = impact.terms + " term(s) and " + impact.assignments + " tag assignment(s)";
+      if ((impact.terms || impact.assignments) &&
+          !confirm("Deleting “" + name + "” also deletes " + cost + ". This cannot be undone. Continue?")) {
+        return setSetMsg(null);
+      }
+      const r = await j("/api/vocabularies/" + encodeURIComponent(name) + "?force=1", { method: "DELETE" });
+      setSetMsg({ kind: "ok", text: "Deleted “" + name + "” (" + r.terms + " terms, " + r.assignments + " assignments)." });
+      await refresh();
+    } catch (err) {
+      setSetMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  const addType = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const name = f.newtype.value.trim();
+    if (!name) return;
+    setSetMsg({ kind: "dim", text: "adding…" });
+    try {
+      await post("/api/terms", { vocabulary: "type", name });
+      f.reset();
+      setSetMsg({ kind: "ok", text: "“" + name + "” is now an allowed content type." });
+      await refresh();
+    } catch (err) {
+      setSetMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  const lock = async () => {
+    await fetch(BASE + "/logout", { method: "POST" }).catch(() => {});
+    location.reload();
+  };
+
+  const changeLock = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    setLockMsg({ kind: "dim", text: "changing…" });
+    try {
+      const r = await post("/api/passphrase", { current: f.cur.value, next: f.nxt.value });
+      f.reset();
+      setLockMsg({ kind: "ok", text: r.message });
+      j("/api/passphrase").then(setLockInfo).catch(() => {});
+    } catch (err) {
+      setLockMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  const revertLock = async () => {
+    setLockMsg({ kind: "dim", text: "reverting…" });
+    try {
+      const r = await j("/api/passphrase", { method: "DELETE" });
+      setLockMsg({ kind: "ok", text: r.message });
+      j("/api/passphrase").then(setLockInfo).catch(() => {});
+    } catch (err) {
+      setLockMsg({ kind: "bad", text: err.message });
+    }
+  };
+
+  const byVocab = useMemo(() => {
+    const map = new Map();
+    for (const v of tax.vocabularies) map.set(v.name, { vocab: v, terms: [] });
+    for (const t of tax.terms) {
+      if (!map.has(t.vocabulary)) map.set(t.vocabulary, { vocab: { name: t.vocabulary, kind: t.vocabulary_kind }, terms: [] });
+      map.get(t.vocabulary).terms.push(t);
+    }
+    return [...map.values()];
+  }, [tax]);
+
+  return html`
+    <${Fragment}>
+      <header class="sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-2
+                     border-b border-line bg-ground/85 px-6 py-3 backdrop-blur-sm">
+        <h1 class="m-0 text-[15px] font-semibold tracking-tight">
+          <a href="#/" class="text-ink no-underline hover:text-ember">__INSTANCE__</a>
+        </h1>
+        <form class="flex min-w-[240px] flex-1 gap-2 sm:max-w-md" onSubmit=${submitSearch}>
+          <input class=${inputCls + " min-w-0 flex-1"} type="search" value=${q} placeholder="Search title and body… (Enter to search)"
+                 autocomplete="off" onInput=${onSearchInput} />
+          <select class=${inputCls + " shrink-0"} value=${mode} onChange=${(e) => setMode(e.target.value)}
+                  title="text = trigram index · semantic = meaning · hybrid = both, measured worse than text · re-runs the committed search">
+            <option value="text">text</option>
+            <option value="semantic">semantic</option>
+            <option value="hybrid">hybrid</option>
+          </select>
+        </form>
+        ${!settingsOpen && !viewKind && html`
+        <nav class="flex items-center gap-1 rounded-lg border border-line p-0.5">
+          ${["content", "timeline"].map((v) => html`
+            <button key=${v} type="button" onClick=${() => setView(v)}
+              class=${"rounded-md px-2.5 py-1 text-[12px] transition " +
+                (view === v ? "bg-chip text-ember" : "text-dim hover:text-ink")}>${v}</button>`)}
+        </nav>`}
+        <nav class="flex items-center gap-3 text-[12px]" aria-label="views">
+          ${[["categories", "#/categories", ["categories", "category"]], ["dig", "#/dig", ["dig"]], ["traces", "#/traces", ["traces", "trace"]]].map(([label, href, kinds]) => html`
+            <a key=${label} href=${href}
+               class=${"no-underline transition " + (kinds.includes(route.kind) ? "text-ember" : "text-dim hover:text-ember")}>${label}</a>`)}
+        </nav>
+        <a href=${settingsOpen ? "#/" : "#/settings"}
+           class=${"rounded-lg border px-2.5 py-1 text-[12px] no-underline transition " +
+             (settingsOpen ? "border-ember/60 text-ember" : "border-line text-dim hover:border-ember/60 hover:text-ember")}>
+          ${settingsOpen ? "done" : "settings"}
+        </a>
+        ${health && health.auth !== "none" && html`
+          <button type="button" onClick=${lock} title="Sign out of this browser"
+                  class="rounded-lg border border-line px-2.5 py-1 text-[12px] text-dim transition
+                         hover:border-ember/60 hover:text-ember">
+            Lock
+          </button>`}
+        ${health && html`
+          <span class="hidden font-mono text-[11px] text-dim sm:inline">
+            v${health.version} · ${health.driver} · ${
+              health.auth === "none" ? html`<span class="text-clay">open</span>` : "auth " + [].concat(health.auth).join(",")
+            } · ${health.tools} tools${health.embedder ? " · embedder on" : ""}
+          </span>`}
+      </header>
+
+      <div class=${"mx-auto grid max-w-[1240px] items-start gap-6 px-6 py-6 " +
+                   (settingsOpen ? "max-w-[860px]" : "lg:grid-cols-[320px_1fr]")}>
+        ${!settingsOpen && html`
+        <aside class="grid gap-5">
+          <${Panel} title="Add content">
+            <form class="grid gap-3" onSubmit=${onCreate}>
+              <input name="title_" class=${inputCls + " w-full"} placeholder="Title" required maxlength="200" />
+              <textarea name="body_" class=${inputCls + " w-full min-h-[92px] font-read text-[15px] leading-7"}
+                        placeholder="Body" rows="4"></textarea>
+              <${Field} label="type">
+                <span class="flex gap-2">
+                  <select name="type_select" class=${inputCls + " min-w-0 flex-1"}>
+                    ${(types.types || []).map((t) => html`<option key=${t.type} value=${t.type}>${t.type} (${t.count})</option>`)}
+                  </select>
+                  <input name="type_free" class=${inputCls + " min-w-0 flex-1"} placeholder="or new type" />
+                </span>
+              <//>
+              <button type="submit" class="rounded-lg bg-ember px-4 py-2 font-semibold text-ground
+                                           shadow-lamp transition hover:brightness-110 active:brightness-95">
+                Create node
+              </button>
+              <p class="m-0 text-[11px] leading-5 text-dim">
+                Tags are the model's job — write it here and let an agent file it.
+                Anything unclassified waits in <a class="text-ember" href="#/untagged">untagged</a>.
+              </p>
+              <div class=${msgCls(formMsg)}>${formMsg?.text || ""}</div>
+              ${refusedType && html`
+                <button type="button" onClick=${() => allowType(refusedType)}
+                        class="rounded-lg border border-ember/50 px-3 py-2 text-[12px] text-ember
+                               transition hover:bg-ember/10">
+                  Allow “${refusedType}” as a content type
+                </button>`}
+            </form>
+          <//>
+
+          <${Panel} title="Sought" action=${html`
+            <span class="flex gap-1">
+              ${["24h", "7d", "all"].map((w) => html`
+                <button key=${w} type="button" onClick=${() => setCloudWindow(w)} aria-pressed=${cloudWindow === w}
+                        class=${"rounded-md border px-2 py-1 text-[11px] font-normal normal-case tracking-normal transition " +
+                          (cloudWindow === w ? "border-ember/70 bg-ember/15 text-ember" : "border-line text-dim hover:border-ember/60 hover:text-ember")}>
+                  ${w}
+                </button>`)}
+            </span>`}>
+            ${!cloud
+              ? html`<${Empty}>…<//>`
+              : cloud.items.length === 0
+                ? html`<${Empty}>Nothing sought yet. Every search, browse and read that names something lands here.<//>`
+                : html`
+                  <div class="flex flex-wrap items-baseline gap-1.5">
+                    ${cloud.items.map((it) => {
+                      const isTerm = it.subject === "term";
+                      const on = isTerm && selected.has(it.id);
+                      // A term click filters, as in the vocabulary clouds; a keyword
+                      // click goes to #/trace/<kw> (PRD §3.7) — a read of the log,
+                      // never a re-run of the search: browsing the cloud must not
+                      // feed the cloud (§3.1). The search box is cleared so a
+                      // lingering query is not re-traced on the way.
+                      const go = () => {
+                        if (isTerm) return toggleTerm(it.id);
+                        setQ(""); setQuery("");
+                        location.hash = "#/trace/" + encodeURIComponent(it.label);
+                      };
+                      return html`
+                        <button key=${it.kind + ":" + it.key} type="button" aria-pressed=${on} onClick=${go}
+                          style=${{ fontSize: it.size_px + "px" }}
+                          title=${it.kind + (it.vocabulary ? " · " + it.vocabulary : "") + " · usage " + it.usage + " · reads " + Number(it.reads).toFixed(1)}
+                          class=${"rounded-full border px-2.5 py-0.5 text-left transition " +
+                            (on ? "border-ember/70 bg-ember/15 text-ember "
+                                : it.kind === "keyword" ? "border-transparent bg-sage/15 text-ink hover:border-ember/50 hover:text-ember "
+                                : "border-transparent bg-chip text-ink hover:border-ember/50 hover:text-ember ")}>
+                          ${it.label}<span class="ml-1 text-[.8em] tabular-nums opacity-60">${Math.round(it.n)}</span>
+                        </button>`;
+                    })}
+                  </div>
+                  <p class="mb-0 mt-2 text-[10px] leading-4 text-dim/70">
+                    size = ln(1 + usage + reads) on one scale · ${cloud.window} by day buckets · keywords in sage
+                  </p>`}
+          <//>
+
+          <${Panel} title="Organization" action=${html`
+            <button type="button" onClick=${() => setTaxOpen((v) => !v)}
+                    class="rounded-md border border-line px-2 py-1 text-[11px] font-normal normal-case tracking-normal
+                           text-dim transition hover:border-ember/60 hover:text-ember">
+              ${taxOpen ? "close" : "+ new"}
+            </button>`}>
+            ${taxOpen && html`
+              <form class="mb-4 grid gap-3 rounded-lg border border-line bg-ground/60 p-3" onSubmit=${onTaxonomy}>
+                <div class="flex gap-2">
+                  <${Field} label="vocabulary"><input name="v_name" class=${inputCls + " w-full"} placeholder="topics" required /><//>
+                  <${Field} label="kind">
+                    <select name="v_kind" class=${inputCls + " w-full"}>
+                      <option value="tags">tags (free)</option>
+                      <option value="categories">categories (controlled)</option>
+                    </select>
+                  <//>
+                </div>
+                <div class="flex gap-2">
+                  <${Field} label="term (optional)"><input name="t_name" class=${inputCls + " w-full"} placeholder="mcp" /><//>
+                  <${Field} label="weight"><input name="t_weight" type="number" defaultValue="0" class=${inputCls + " w-full"} /><//>
+                </div>
+                <button type="submit" class="rounded-lg border border-line px-3 py-2 text-[13px] transition hover:border-ember/60 hover:text-ember">Create</button>
+                <div class=${msgCls(taxMsg)}>${taxMsg?.text || ""}</div>
+              </form>`}
+
+            ${selected.size > 0 && html`
+              <div class="mb-3 flex items-center gap-2">
+                <span class="flex-1 font-mono text-[11px] text-dim">${selected.size} tag(s) selected</span>
+                <select class=${inputCls + " py-1 text-[12px]"} value=${route.match}
+                        onChange=${(e) => { location.hash = "#/terms/" + encodeURIComponent([...selected].join(",")) + "/" + e.target.value; }}
+                        title="all = every tag (AND) · any = at least one (OR)">
+                  <option value="any">any</option>
+                  <option value="all">all</option>
+                </select>
+                <button type="button" onClick=${() => { location.hash = "#/"; }}
+                        class="rounded-md border border-line px-2 py-1 text-[11px] text-dim transition hover:border-ember/60 hover:text-ember">clear</button>
+              </div>`}
+
+            ${byVocab.length === 0
+              ? html`<${Empty}>No vocabularies yet. An agent creates them as it files things.<//>`
+              : byVocab.map(({ vocab, terms }) => {
+                  const menu = vocab.kind === "categories";
+                  return html`
+                    <div key=${vocab.name} class="mb-4 last:mb-0">
+                      <div class="mb-1.5 flex items-baseline gap-2">
+                        <b class="text-[12px] font-semibold text-dim">${vocab.name}</b>
+                        <span class="text-[10px] uppercase tracking-[.08em] text-dim/60">${menu ? "menu" : "cloud"}</span>
+                      </div>
+                      <div class=${menu ? "grid gap-1" : "flex flex-wrap items-baseline gap-1.5"}>
+                        ${terms.map((t) => {
+                          // A menu entry links #/category/<id> — a browse, traced
+                          // as kind='category' (PRD §3.7); a cloud term still
+                          // filters the list in place.
+                          const on = menu ? route.kind === "category" && route.value === t.id : selected.has(t.id);
+                          const size = menu ? 12 : cloudSize(Number(t.usage) || 0, maxUsage);
+                          const go = menu ? () => { location.hash = "#/category/" + encodeURIComponent(t.id); } : () => toggleTerm(t.id);
+                          return html`
+                            <button key=${t.id} type="button" aria-pressed=${on} onClick=${go}
+                              style=${{ fontSize: size + "px" }}
+                              class=${"rounded-full border px-2.5 py-0.5 text-left transition " +
+                                (menu ? "block w-full rounded-md " : "") +
+                                (on ? "border-ember/70 bg-ember/15 text-ember "
+                                    : "border-transparent bg-chip text-ink hover:border-ember/50 hover:text-ember ") +
+                                (Number(t.usage) ? "" : "opacity-50")}>
+                              ${t.name}<span class="ml-1 text-[.8em] tabular-nums opacity-60">${t.usage}</span>
+                            </button>`;
+                        })}
+                      </div>
+                    </div>`;
+                })}
+          <//>
+
+          <${Panel} title="Corpus" action=${untagged > 0 ? html`
+            <a href="#/untagged" class="font-mono text-[11px] font-normal normal-case tracking-normal text-clay">${untagged} untagged</a>` : null}>
+            ${!stats ? html`<${Empty}>…<//>` : html`
+              <div class="flex flex-wrap gap-x-7 gap-y-3">
+                ${[["nodes", stats.nodes], ["published", stats.published], ["vocabs", (stats.vocabularies || []).length],
+                   ["embedded", stats.embedding ? stats.embedding.embedded : 0]].map(([label, value]) => html`
+                  <div key=${label}>
+                    <b class="block text-[20px] font-semibold tabular-nums leading-tight">${value ?? 0}</b>
+                    <span class="text-[11px] text-dim">${label}</span>
+                  </div>`)}
+              </div>`}
+          <//>
+        </aside>`}
+
+        <main class="grid gap-5">
+          ${settingsOpen ? html`
+            <${Panel} title="Content types">
+              <p class="m-0 mb-3 max-w-[62ch] text-[12px] leading-5 text-dim">
+                ${types.policy === "controlled"
+                  ? "A controlled vocabulary named “type” is deciding what a node may be. New types must be added here first — that is the guard working, not a bug, but the create form could not previously grant it."
+                  : "Content types are free text: a type exists the moment a node names it. Create a vocabulary named “type” with kind “categories” to lock the list down."}
+              </p>
+              <div class="mb-3 flex flex-wrap gap-1.5">
+                ${(types.types || []).map((ty) => html`
+                  <span key=${ty.type} class="rounded-full bg-chip px-2.5 py-0.5 text-[12px]">
+                    ${ty.type}<span class="ml-1 tabular-nums text-[.8em] opacity-60">${ty.count}</span>
+                  </span>`)}
+              </div>
+              ${types.policy === "controlled" && html`
+                <form class="flex gap-2" onSubmit=${addType}>
+                  <input name="newtype" class=${inputCls + " min-w-0 flex-1"} placeholder="supercool" />
+                  <button type="submit" class="shrink-0 rounded-lg bg-ember px-3 py-2 text-[13px] font-semibold text-ground transition hover:brightness-110">Allow it</button>
+                </form>`}
+            <//>
+
+            <${Panel} title="Vocabularies">
+              <p class="m-0 mb-3 max-w-[62ch] text-[12px] leading-5 text-dim">
+                <b class="text-ink">tags</b> are free — an agent invents terms as it files.${" "}
+                <b class="text-ink">categories</b> are controlled — an unknown term is refused, which
+                is what stops a model producing <code class="font-mono">mcp</code>,${" "}
+                <code class="font-mono">MCP</code> and${" "}
+                <code class="font-mono">model-context-protocol</code>${" "}
+                for one idea. Deleting a vocabulary is the way back to free text, and it takes every
+                term and tag assignment with it.
+              </p>
+              <table class="w-full border-collapse text-[13px]">
+                <tbody>
+                  ${vocabs.map((v) => html`
+                    <tr key=${v.id ?? v.name} class="border-b border-line last:border-0">
+                      <td class="py-2 font-semibold">${v.name}</td>
+                      <td class="py-2 text-dim">${v.kind === "categories" ? "categories (controlled)" : "tags (free)"}</td>
+                      <td class="py-2 text-right">
+                        <button type="button" onClick=${() => dropVocabulary(v.name)}
+                                class="rounded-md px-2 py-0.5 text-[12px] text-dim transition hover:text-clay">delete</button>
+                      </td>
+                    </tr>`)}
+                </tbody>
+              </table>
+              <div class=${msgCls(setMsg) + " mt-3"}>${setMsg?.text || ""}</div>
+            <//>
+
+            ${health && health.auth !== "none" && html`
+              <${Panel} title="Lock">
+                <p class="m-0 mb-3 text-[12px] leading-5 text-dim">
+                  ${lockInfo && lockInfo.stored
+                    ? "Using a passphrase you set here. The deployed OWNER_PASSPHRASE still works as a recovery path."
+                    : "Using the deployed OWNER_PASSPHRASE secret. Set your own below — the deployed one keeps working, so forgetting yours is not losing the corpus."}
+                </p>
+                <form class="grid max-w-sm gap-3" onSubmit=${changeLock}>
+                  <${Field} label="new passphrase (min ${(lockInfo && lockInfo.min_length) || 8})">
+                    <input name="nxt" type="password" class=${inputCls + " w-full"} required autocomplete="new-password" />
+                  <//>
+                  <${Field} label="current passphrase — optional, you are already signed in">
+                    <input name="cur" type="password" class=${inputCls + " w-full"} autocomplete="current-password" />
+                  <//>
+                  <div class="flex gap-2">
+                    <button type="submit" class="rounded-lg bg-ember px-3 py-2 text-[13px] font-semibold text-ground transition hover:brightness-110">Change the lock</button>
+                    ${lockInfo && lockInfo.stored && html`
+                      <button type="button" onClick=${revertLock}
+                              class="rounded-lg border border-line px-3 py-2 text-[12px] text-dim transition hover:border-clay/60 hover:text-clay">
+                        Revert to the deployed secret
+                      </button>`}
+                  </div>
+                  <p class="m-0 text-[11px] leading-5 text-dim">Changing it signs out every other browser. This one stays in.</p>
+                  <div class=${msgCls(lockMsg)}>${lockMsg?.text || ""}</div>
+                </form>
+              <//>`}
+
+            <${Panel} title="Access">
+              <p class="m-0 mb-4 max-w-[62ch] text-[12px] leading-5 text-dim">
+                Who can reach this corpus. The top half is <b class="text-ink">who has actually
+                called in</b> — counted from requests that passed the gate, so a client holding a
+                token it never uses does not appear here. The bottom half is every OAuth client that
+                ever registered; revoking one takes effect on its next request.
+              </p>
+
+              ${access && html`
+                <div class="mb-3 flex flex-wrap items-center gap-2 text-[12px]">
+                  <span class=${"rounded-full px-2.5 py-0.5 font-semibold " + (
+                    access.claude_ai === "connected" ? "bg-sage/20 text-sage"
+                      : access.claude_ai === "idle" ? "bg-ember/20 text-ember"
+                      : "bg-chip text-dim")}>
+                    claude.ai · ${access.claude_ai === "connected" ? "connected"
+                      : access.claude_ai === "idle" ? "has a token, quiet" : "never connected"}
+                  </span>
+                  <span class="text-dim">${(access.connections || []).length} caller${(access.connections || []).length === 1 ? "" : "s"}</span>
+                  <span class="ml-auto flex gap-1">
+                    ${["24h", "7d", "all"].map((w) => html`
+                      <button key=${w} type="button" onClick=${() => setSince(w)}
+                              class=${"rounded-md border px-2 py-0.5 transition " + (
+                                since === w ? "border-ember/60 text-ember" : "border-line text-dim hover:text-ember")}>
+                        ${w}
+                      </button>`)}
+                  </span>
+                </div>`}
+
+              ${!access ? html`<${Empty}>Reading…<//>`
+                : (access.connections || []).length === 0
+                  ? html`<${Empty}>Nothing has called in during this window.<//>`
+                  : html`
+                    <table class="w-full border-collapse text-[13px]">
+                      <tbody>
+                        ${access.connections.map((c) => html`
+                          <tr key=${c.id} class="border-b border-line align-top last:border-0">
+                            <td class="py-2 pr-3">
+                              <span class="font-semibold">${c.label}</span>
+                              <span class="ml-2 font-mono text-[11px] text-dim">${c.method}</span>
+                              ${c.remoteIp && html`<span class="ml-2 font-mono text-[11px] text-dim">${c.remoteIp}</span>`}
+                            </td>
+                            <td class="py-2 pr-3 tabular-nums text-[12px] text-dim">${when(c.lastSeen)}</td>
+                            <td class="py-2 pr-3 tabular-nums text-[12px] text-dim">
+                              ${c.requests} req
+                              <span class="ml-2">${c.toolCalls} tool</span>
+                            </td>
+                            <td class="py-2 text-right font-mono text-[11px] text-dim">${c.lastTool || ""}</td>
+                          </tr>`)}
+                      </tbody>
+                    </table>`}
+
+              <h3 class="mb-2 mt-6 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">
+                <span>OAuth clients</span>
+                ${clients && clients.length > 0 && html`
+                  <button type="button" onClick=${revokeAll} title="DELETE /api/clients — every token and pending code; registrations kept"
+                          class="rounded-md border border-line px-2 py-1 text-[11px] font-normal normal-case tracking-normal
+                                 text-dim transition hover:border-clay/60 hover:text-clay">
+                    Revoke all connectors
+                  </button>`}
+              </h3>
+              ${!clients ? html`<${Empty}>Reading…<//>`
+                : clients.length === 0
+                  ? html`<${Empty}>No client has ever registered. claude.ai registers itself the first time you connect it.<//>`
+                  : html`
+                    <table class="w-full border-collapse text-[13px]">
+                      <tbody>
+                        ${clients.map((c) => html`
+                          <tr key=${c.client_id} class="border-b border-line align-top last:border-0">
+                            <td class="py-2 pr-3">
+                              <span class="font-semibold">${c.client_name || "unnamed"}</span>
+                              <div class="font-mono text-[11px] text-dim">${c.client_id}</div>
+                            </td>
+                            <td class="py-2 pr-3 text-[12px] text-dim">
+                              <span class=${"rounded-full px-2 py-0.5 " + (c.authorized ? "bg-sage/20 text-sage" : "bg-chip")}>
+                                ${c.authorized ? "authorized" : "not authorized"}
+                              </span>
+                              <span class="ml-2">${c.active_tokens ?? 0} live token${c.active_tokens === 1 ? "" : "s"}</span>
+                              <div class="tabular-nums">first ${when(c.created_at)}</div>
+                            </td>
+                            <td class="py-2 pr-3 text-[12px] text-dim">
+                              ${c.last_token_at
+                                ? html`last token ${when(c.last_token_at)}`
+                                : html`<span class="opacity-70">never issued a token</span>`}
+                            </td>
+                            <td class="py-2 text-right">
+                              <button type="button" onClick=${() => revokeClient(c.client_id, c.client_name)}
+                                      class="rounded-md px-2 py-0.5 text-[12px] text-dim transition hover:text-clay">revoke</button>
+                            </td>
+                          </tr>`)}
+                      </tbody>
+                    </table>`}
+              <div class=${msgCls(accessMsg) + " mt-3"}>${accessMsg?.text || ""}</div>
+            <//>
+
+            <${Panel} title="Housekeeping">
+              ${!health ? html`<${Empty}>Reading…<//>` : html`<${Housekeeping} health=${health} />`}
+            <//>
+
+            <${Panel} title="Forget a keyword">
+              <p class="m-0 mb-3 max-w-[62ch] text-[12px] leading-5 text-dim">
+                The log keeps a sought keyword's label for as long as the node lives (day buckets and
+                digs are never evicted). This is the one way to drop one: its trace rows, day buckets
+                and digs go in one batch, and the forget itself is logged as
+                <code class="font-mono">trace_forget</code>.
+              </p>
+              <form class="flex max-w-sm gap-2" onSubmit=${forget}>
+                <input name="kw" class=${inputCls + " min-w-0 flex-1"} placeholder="keyword" required maxlength="200" autocomplete="off" />
+                <button type="submit" class="shrink-0 rounded-lg border border-line px-3 py-2 text-[12px] text-dim transition hover:border-clay/60 hover:text-clay">Forget</button>
+              </form>
+              <div class=${msgCls(forgetMsg) + " mt-3"}>${forgetMsg?.text || ""}</div>
+            <//>
+
+            <${Panel} title="Recent traces" action=${html`
+              <a href="#/traces" class="font-mono text-[11px] font-normal normal-case tracking-normal text-ember no-underline">all traces →</a>`}>
+              ${!traceTail ? html`<${Empty}>Reading…<//>`
+                : traceTail.error ? html`<${Empty}>${traceTail.error} — the raw log is owner-session and api-token only.<//>`
+                : traceTail.traces.length === 0 ? html`<${Empty}>Nothing traced yet.<//>`
+                : html`<${TraceTable} rows=${traceTail.traces} subject=${true} />`}
+            <//>
+          ` : viewKind === "trace" ? html`
+            <${TraceView} keyword=${route.value} report=${trace} window=${traceWindow} setWindow=${setTraceWindow}
+                          onDig=${runDig} msg=${digMsg} />
+          ` : viewKind === "categories" ? html`
+            <${CategoriesView} menu=${catMenu} />
+          ` : viewKind === "category" ? html`
+            <${CategoryView} id=${route.value} report=${category} />
+          ` : viewKind === "dig" ? html`
+            <${DigView} keyword=${route.value} result=${digResult} history=${digHistory} onDig=${runDig} msg=${digMsg} />
+          ` : viewKind === "traces" ? html`
+            <${TracesView} data=${tracesList} window=${tracesWindow} setWindow=${setTracesWindow} />
+          ` : view === "timeline" ? html`
+            <${Panel} title="Timeline">
+              ${!events ? html`<${Empty}>Reading…<//>`
+                : events.length === 0 ? html`<${Empty}>Nothing has happened yet.<//>`
+                : html`
+                  <ol class="m-0 list-none p-0">
+                    ${events.map((e, i) => html`
+                      <li key=${e.kind + e.id} class="settle relative flex gap-3 py-2 pl-4"
+                          style=${{ animationDelay: Math.min(i, 10) * 18 + "ms" }}>
+                        <span class=${"absolute left-0 top-[14px] h-1.5 w-1.5 rounded-full " +
+                          (e.kind === "node" ? "bg-ember" : e.kind === "trace" ? "bg-sage" : e.outcome === "error" ? "bg-clay" : "bg-dim/80")}></span>
+                        <span class=${"absolute left-[2.5px] top-[20px] w-px bg-line " +
+                          (i === events.length - 1 ? "h-0" : "h-full")}></span>
+                        <time class="w-[132px] shrink-0 tabular-nums text-[12px] text-dim">${when(e.at)}</time>
+                        <span class="min-w-0 flex-1">
+                          <span class=${"font-mono text-[11px] uppercase tracking-[.08em] " +
+                            (e.kind === "node" ? "text-ember" : e.kind === "trace" ? "text-sage" : "text-dim")}>${e.kind}</span>
+                          <span class=${"ml-2 " + (e.kind === "node" ? "font-read text-[15px]" : "font-mono text-[12px]")}>${e.label}</span>
+                          ${e.detail && html`<span class="ml-2 text-[11px] text-dim">${e.detail}</span>`}
+                          ${e.outcome === "error" && html`<span class="ml-2 text-[11px] text-clay">error</span>`}
+                          ${e.duration_ms != null && html`<span class="ml-2 tabular-nums text-[11px] text-dim">${e.duration_ms}ms</span>`}
+                        </span>
+                      </li>`)}
+                  </ol>
+                  <p class="mt-3 border-t border-line pt-3 text-[11px] leading-5 text-dim">
+                    Nodes, tool calls and traces (reads that carried an intent) interleaved by event time, merged in SQL and ordered <code class="font-mono">at DESC, rowid DESC</code> — the rowid tiebreaker is there because
+                    wall-clock time is not unique at machine speed, and this project has already had two
+                    same-millisecond rows order non-deterministically.
+                  </p>`}
+            <//>` : html`
+          <${Panel} title=${heading}>
+            ${nodes === null
+              ? html`<${Empty}>Reading…<//>`
+              : nodes.length === 0
+                ? html`<${Empty}>Nothing here yet. Write something on the left.<//>`
+                : nodes.map((n, i) => html`
+                    <article key=${n.id} class=${"settle border-b border-line py-4 first:pt-0 last:border-0 last:pb-0"}
+                             style=${{ animationDelay: Math.min(i, 8) * 22 + "ms" }}>
+                      <h3 class="m-0 mb-1.5 font-read text-[17px] font-semibold leading-snug">${n.title}</h3>
+                      <div class="flex flex-wrap items-center gap-2 text-[12px] text-dim">
+                        <span class="rounded-full border border-line px-2 py-0.5">${n.type}</span>
+                        <span class="tabular-nums">${when(n.created_at)}</span>
+                        ${(n.terms || []).map((t) => html`
+                          <button key=${t.id} type="button" onClick=${() => toggleTerm(t.id)}
+                                  class="rounded-full bg-chip px-2 py-0.5 text-dim transition hover:text-ember">
+                            ${t.vocabulary}:${t.name}
+                          </button>`)}
+                        <button type="button" onClick=${() => del(n.id)}
+                                class="ml-auto rounded-md px-2 py-0.5 text-dim transition hover:text-clay">delete</button>
+                      </div>
+                      ${n.body && html`<p class="mt-2 max-w-[68ch] whitespace-pre-wrap break-words font-read text-[15px] leading-7 text-ink/90">${n.body}</p>`}
+                    </article>`)}
+          <//>
+
+          `}
+
+          ${!settingsOpen && html`
+          <${Panel} title="MCP call log">
+            ${!calls ? html`<${Empty}>…<//>`
+              : calls.length === 0 ? html`<${Empty}>No MCP calls yet. Connect a client and it fills up.<//>`
+              : html`
+                <div class="overflow-x-auto">
+                  <table class="w-full border-collapse text-[12px]">
+                    <thead><tr class="text-left text-dim">
+                      ${["when", "tool", "input", "result", "ms"].map((h) => html`
+                        <th key=${h} class="border-b border-line px-2 py-1.5 font-semibold">${h}</th>`)}
+                    </tr></thead>
+                    <tbody>
+                      ${calls.map((c) => html`
+                        <tr key=${c.id} class="align-top">
+                          <td class="border-b border-line px-2 py-1.5 tabular-nums text-dim">${when(c.called_at)}</td>
+                          <td class=${"border-b border-line px-2 py-1.5 font-mono " + (c.outcome === "error" ? "text-clay" : "text-ember")}>${c.tool}</td>
+                          <td class="max-w-[22ch] border-b border-line px-2 py-1.5"><${Yaml} raw=${c.input} /></td>
+                          <td class="max-w-[34ch] border-b border-line px-2 py-1.5"><${Yaml} raw=${c.result} /></td>
+                          <td class="border-b border-line px-2 py-1.5 tabular-nums">${c.duration_ms}</td>
+                        </tr>`)}
+                    </tbody>
+                  </table>
+                </div>`}
+          <//>`}
+        </main>
+      </div>
+    <//>`;
+}
+
+const Yaml = ({ raw }) => {
+  const parsed = tryParse(raw);
+  if (parsed === undefined)
+    return html`<span class="break-words font-mono text-dim">${raw}</span>`;
+  return html`
+    <details class="yaml">
+      <summary class="font-mono text-dim">${summarise(raw)}</summary>
+      <pre class="mt-1.5 overflow-x-auto rounded-md bg-chip px-2.5 py-2 font-mono text-[11.5px] leading-6">${toYaml(parsed)}</pre>
+    </details>`;
+};
+
+// ── the gate-1b views (PRD §3.7, §8.1b) ──────────────────────────────────────
+// Each is one Panel stamped data-view="…". They render what the API returned
+// and nothing the API withheld: /api/trace and /api/digs already filter
+// principals, rows and ha_user by the visibility rule (§3.10), so a view never
+// has to decide who may see what — it shows the rows it was given.
+
+/** A page of raw trace rows — the #/traces view and the settings tail. */
+function TraceTable({ rows, subject }) {
+  const label = (r) => r.keyword || (r.vocabulary ? r.vocabulary + ":" : "") + (r.subject_key || r.term_id || r.node_id || "");
+  return html`
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-[12px]">
+        <thead><tr class="text-left text-dim">
+          ${["when", "kind", ...(subject ? ["subject"] : []), "surface", "who", "hits", "mode", "ms"].map((h) => html`
+            <th key=${h} class="border-b border-line px-2 py-1.5 font-semibold">${h}</th>`)}
+        </tr></thead>
+        <tbody>
+          ${rows.map((r, i) => html`
+            <tr key=${r.id || i} class="align-top">
+              <td class="whitespace-nowrap border-b border-line px-2 py-1.5 tabular-nums text-dim">${when(r.at)}</td>
+              <td class=${"border-b border-line px-2 py-1.5 font-mono " + (r.kind === "dig" ? "text-ember" : "text-sage")}>${r.kind}</td>
+              ${subject && html`
+                <td class="border-b border-line px-2 py-1.5">
+                  ${r.subject === "keyword" && r.keyword
+                    ? html`<a href=${"#/trace/" + encodeURIComponent(r.keyword)} class="text-ink hover:text-ember">${r.keyword}</a>`
+                    : html`<span class="font-mono text-dim">${r.subject}${" "}${label(r)}</span>`}
+                </td>`}
+              <td class="border-b border-line px-2 py-1.5 font-mono text-dim">${r.surface}</td>
+              <td class="border-b border-line px-2 py-1.5 font-mono text-dim">${who(r)}</td>
+              <td class="border-b border-line px-2 py-1.5 tabular-nums">${r.hits}</td>
+              <td class="border-b border-line px-2 py-1.5 font-mono text-dim">${r.mode || ""}</td>
+              <td class="border-b border-line px-2 py-1.5 tabular-nums">${r.took_ms}</td>
+            </tr>`)}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+/** #/trace/<kw> — days[] sparkline, by_kind/by_method, principals, rows, Dig. */
+function TraceView({ keyword, report, window, setWindow, onDig, msg }) {
+  const r = report;
+  return html`
+    <${Panel} view="trace" title=${"Trace · " + (keyword || "…")}
+              action=${html`<${WindowToggle} value=${window} onChange=${setWindow} />`}>
+      ${!keyword ? html`<${Empty}>Name a keyword: click one in the cloud, or open #/trace/<kw>.<//>`
+        : !r ? html`<${Empty}>Reading…<//>`
+        : r.error ? html`<${Empty}>${r.error}<//>`
+        : html`
+          <div class="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[12px] text-dim">
+            <span><b class="text-[20px] font-semibold tabular-nums text-ink">${r.count}</b> read${r.count === 1 ? "" : "s"}</span>
+            ${r.first && html`<span>first <span class="tabular-nums">${when(r.first)}</span></span>`}
+            ${r.last && html`<span>last <span class="tabular-nums">${when(r.last)}</span></span>`}
+            ${r.label && r.label !== keyword && html`<span>last spelt “${r.label}”</span>`}
+            <button type="button" onClick=${() => onDig(keyword)} title="POST /api/dig — everything the node knows about it"
+                    class="ml-auto rounded-lg bg-ember px-3 py-1.5 text-[12px] font-semibold text-ground shadow-lamp transition hover:brightness-110">
+              Dig
+            </button>
+          </div>
+          <div class=${msgCls(msg)}>${msg?.text || ""}</div>
+          <${Sparkline} days=${r.days} />
+          <div class="mt-3 flex flex-wrap gap-1.5">
+            <${Chips} map=${r.by_kind} /><${Chips} map=${r.by_method} tone="sage" />
+          </div>
+
+          <h3 class="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Who sought it</h3>
+          ${r.principals.length === 0
+            ? html`<${Empty}>No principal this session may see.<//>`
+            : html`
+              <div class="flex flex-wrap gap-1.5">
+                ${r.principals.map((p) => html`
+                  <span key=${p.method + ":" + p.principal + ":" + (p.ha_user || "")} class="rounded-full bg-chip px-2.5 py-0.5 font-mono text-[11px]">
+                    ${who(p)}<span class="ml-1 tabular-nums opacity-60">${p.n}</span>
+                  </span>`)}
+              </div>`}
+
+          <h3 class="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Rows</h3>
+          ${r.rows.length === 0
+            ? html`<${Empty}>No rows in this window that this session may see; the day buckets above outlive the rows.<//>`
+            : html`<${TraceTable} rows=${r.rows} />`}
+          <p class="mb-0 mt-3 text-[11px] leading-5 text-dim">
+            Day buckets come from <code class="font-mono">trace_days</code> and survive eviction; rows are the raw
+            log, ${r.window}. Rows and principals are what this session may see — the owner everything, an HA
+            user their own, a connector with <code class="font-mono">traces:read</code> the principals.
+          </p>`}
+    <//>`;
+}
+
+/** #/categories — every controlled vocabulary with its root terms. */
+function CategoriesView({ menu }) {
+  return html`
+    <${Panel} view="categories" title="Categories">
+      ${!menu ? html`<${Empty}>Reading…<//>`
+        : menu.error ? html`<${Empty}>${menu.error}<//>`
+        : menu.vocabularies.length === 0
+          ? html`<${Empty}>No controlled vocabulary yet. Create one with kind “categories” under Organization; its terms become this menu.<//>`
+          : menu.vocabularies.map((v) => html`
+            <div key=${v.id} class="mb-5 last:mb-0">
+              <div class="mb-1.5 flex flex-wrap items-baseline gap-2">
+                <b class="text-[13px] font-semibold">${v.label || v.name}</b>
+                <span class="text-[10px] uppercase tracking-[.08em] text-dim/60">${v.terms.length} root term${v.terms.length === 1 ? "" : "s"}</span>
+                ${v.description && html`<span class="text-[11px] text-dim">${v.description}</span>`}
+              </div>
+              ${v.terms.length === 0
+                ? html`<${Empty}>Empty — an agent adds terms as it files.<//>`
+                : html`
+                  <div class="grid gap-1.5 sm:grid-cols-2">
+                    ${v.terms.map((t) => html`
+                      <a key=${t.id} href=${"#/category/" + encodeURIComponent(t.id)}
+                         class="flex items-baseline gap-2 rounded-md border border-transparent bg-chip px-3 py-1.5 text-ink no-underline transition hover:border-ember/50 hover:text-ember"
+                         title=${(t.description || t.name) + " · weight " + t.weight + (t.last ? " · last read " + when(t.last) : "")}>
+                        <span class="font-semibold">${t.name}</span>
+                        <span class="ml-auto whitespace-nowrap font-mono text-[11px] text-dim">
+                          ${t.usage} node${t.usage === 1 ? "" : "s"} · ${Number(t.reads).toFixed(1)} reads
+                        </span>
+                      </a>`)}
+                  </div>`}
+            </div>`)}
+    <//>`;
+}
+
+/** #/category/<id> — breadcrumb, reads, children, the nodes filed here. */
+function CategoryView({ id, report }) {
+  const r = report;
+  const crumb = (p, current) => html`
+    <a key=${p.id} href=${"#/category/" + encodeURIComponent(p.id)}
+       class=${"no-underline " + (current ? "text-ember" : "text-dim hover:text-ember")}>${p.name}</a>`;
+  return html`
+    <${Panel} view="category" title=${r && !r.error ? "Category · " + r.vocabulary + ":" + r.term.name : "Category"}
+              action=${html`<a href="#/categories" class="font-mono text-[11px] font-normal normal-case tracking-normal text-ember no-underline">all categories</a>`}>
+      ${!id ? html`<${Empty}>Pick an entry from <a class="text-ember" href="#/categories">categories</a>.<//>`
+        : !r ? html`<${Empty}>Reading…<//>`
+        : r.error ? html`<${Empty}>${r.error}<//>`
+        : html`
+          <nav class="mb-3 flex flex-wrap items-center gap-1.5 text-[12px]" aria-label="breadcrumb">
+            <a href="#/categories" class="text-dim no-underline hover:text-ember">${r.vocabulary}</a>
+            ${r.path.filter((p) => p.id !== r.term.id).map((p) => html`<${Fragment} key=${p.id}><span class="text-dim/60">›</span>${crumb(p, false)}<//>`)}
+            <span class="text-dim/60">›</span>${crumb(r.term, true)}
+          </nav>
+          ${r.term.description && html`<p class="m-0 mb-3 max-w-[62ch] text-[12px] leading-5 text-dim">${r.term.description}</p>`}
+          <div class="mb-4 flex flex-wrap gap-x-7 gap-y-3">
+            ${[["nodes", r.usage], ["reads 24h", Number(r.reads_24h).toFixed(1)], ["reads 7d", Number(r.reads_7d).toFixed(1)], ["reads all", Number(r.reads_all).toFixed(1)]].map(([label, value]) => html`
+              <div key=${label}>
+                <b class="block text-[20px] font-semibold tabular-nums leading-tight">${value}</b>
+                <span class="text-[11px] text-dim">${label}</span>
+              </div>`)}
+            ${r.last_read && html`<div><b class="block text-[13px] tabular-nums leading-tight">${when(r.last_read)}</b><span class="text-[11px] text-dim">last read</span></div>`}
+          </div>
+          ${r.children.length > 0 && html`
+            <h3 class="mb-2 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Within</h3>
+            <div class="mb-4 flex flex-wrap gap-1.5">
+              ${r.children.map((c) => html`
+                <a key=${c.id} href=${"#/category/" + encodeURIComponent(c.id)}
+                   class="rounded-full bg-chip px-2.5 py-0.5 text-[12px] text-ink no-underline transition hover:text-ember">
+                  ${c.name}<span class="ml-1 tabular-nums text-[.85em] opacity-60">${c.usage}</span>
+                </a>`)}
+            </div>`}
+          <h3 class="mb-2 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Filed here</h3>
+          ${r.nodes.length === 0
+            ? html`<${Empty}>Nothing filed under this category yet.<//>`
+            : r.nodes.map((n, i) => html`
+              <article key=${n.id} class="settle border-b border-line py-3 last:border-0 last:pb-0" style=${{ animationDelay: Math.min(i, 8) * 22 + "ms" }}>
+                <h4 class="m-0 mb-1 font-read text-[16px] font-semibold leading-snug">${n.title}</h4>
+                <div class="flex flex-wrap items-center gap-2 text-[12px] text-dim">
+                  <span class="rounded-full border border-line px-2 py-0.5">${n.type}</span>
+                  <span class="tabular-nums">${when(n.created_at)}</span>
+                </div>
+                ${n.body && html`<p class="mt-1.5 max-w-[68ch] whitespace-pre-wrap break-words font-read text-[14px] leading-6 text-ink/90">${n.body.length > 280 ? n.body.slice(0, 280) + "…" : n.body}</p>`}
+              </article>`)}`}
+    <//>`;
+}
+
+// Provenance tiers (PRD §3.6): where each dig item came from, in the order the
+// scores rank them. The tier is the honest part of the answer — "filed under
+// a name" and "a body mentions it" are different kinds of knowing.
+const DIG_TIERS = [
+  ["filed", ["term", "category"], "a vocabulary names it"],
+  ["content", ["node_fts", "node_graph", "node_vector"], "nodes — text hit, graph reach, vector"],
+  ["memory", ["trace", "call", "prior_dig"], "the log — sought, called, dug before"],
+  ["related", ["related_term"], "terms sharing nodes with a hit"],
+];
+const digHref = (it) =>
+  it.source === "term" || it.source === "related_term" ? "#/terms/" + encodeURIComponent(it.id) + "/any"
+  : it.source === "category" ? "#/category/" + encodeURIComponent(it.id)
+  : it.source === "prior_dig" ? null
+  : null;
+
+/** #/dig[/<kw>] — the form, the ranked bundle by provenance tier, prior digs. */
+function DigView({ keyword, result, history, onDig, msg }) {
+  const [q, setQ] = useState(keyword || "");
+  useEffect(() => { setQ(keyword || ""); }, [keyword]);
+  const b = result && result.for === keyword ? result.bundle : null;
+  const c = b && b.counts;
+  const memoryOnly = c && !(c.terms + c.categories) && !(c.nodes_fts + c.nodes_graph + (c.nodes_vector || 0)) && (c.traces + c.calls + c.prior_digs) > 0;
+  const tierOf = (it) => (DIG_TIERS.find(([, sources]) => sources.includes(it.source)) || ["other"])[0];
+  const grouped = b ? DIG_TIERS.map(([tier, , why]) => [tier, why, b.items.filter((it) => tierOf(it) === tier)]).filter(([, , items]) => items.length) : [];
+  const Item = ({ it }) => {
+    const href = digHref(it);
+    return html`
+      <li class="flex flex-wrap items-baseline gap-2 border-b border-line py-1.5 last:border-0">
+        <span class="w-[6.5rem] shrink-0 font-mono text-[10px] uppercase tracking-[.06em] text-dim">${it.source.replace("_", " ")}</span>
+        ${href ? html`<a href=${href} class="font-semibold text-ink no-underline hover:text-ember">${it.label}</a>`
+               : html`<span class=${"font-semibold " + (it.source.startsWith("node") ? "font-read text-[15px]" : "")}>${it.label}</span>`}
+        <span class="text-[11px] text-dim">${it.why}</span>
+        <span class="ml-auto tabular-nums text-[11px] text-dim">${it.score}${it.at ? " · " + when(it.at) : ""}</span>
+      </li>`;
+  };
+  return html`
+    <${Panel} view="dig" title=${"Dig" + (keyword ? " · " + keyword : "")}>
+      <form class="mb-3 flex max-w-lg gap-2" onSubmit=${(e) => { e.preventDefault(); onDig(q); }}>
+        <input class=${inputCls + " min-w-0 flex-1"} type="search" value=${q} placeholder="everything the node knows about…"
+               autocomplete="off" maxlength="200" onInput=${(e) => setQ(e.target.value)} />
+        <button type="submit" class="shrink-0 rounded-lg bg-ember px-4 py-2 font-semibold text-ground shadow-lamp transition hover:brightness-110">Dig</button>
+      </form>
+      <div class=${msgCls(msg)}>${msg?.text || ""}</div>
+
+      ${b && html`
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-dim">
+          <span class=${"rounded-full px-2.5 py-0.5 font-semibold " + frictionCls(b.friction)}>friction ${b.friction} · ${b.confidence}</span>
+          <span>dig #${b.dig_seq}</span>
+          <span class="font-mono">${b.dug_by}</span>
+          <span class="tabular-nums">${when(b.as_of)}</span>
+          <span class="tabular-nums">${b.took_ms} ms</span>
+          <a href=${"#/trace/" + encodeURIComponent(b.keyword)} class="ml-auto text-ember no-underline">its trace →</a>
+        </div>
+        ${memoryOnly && html`
+          <p class="mt-2 rounded-lg border border-ember/40 bg-ember/10 px-3 py-2 text-[12px] leading-5">
+            Asked before, never filed — the log knows this word and the corpus does not.
+            <a class="text-ember" href="#/">File it?</a>
+          </p>`}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          ${Object.entries(b.counts).map(([k, v]) => html`
+            <span key=${k} class="rounded-full bg-chip px-2 py-0.5 font-mono text-[11px]" title=${v === null ? "no embedder: not looked, not an empty answer" : ""}>
+              ${k}<span class="ml-1 tabular-nums opacity-60">${v === null ? "n/a" : v}</span>
+            </span>`)}
+        </div>
+
+        ${grouped.length === 0
+          ? html`<${Empty}>Nothing at or above the confident floor (15).<//>`
+          : grouped.map(([tier, why, items]) => html`
+            <div key=${tier} class="mt-4">
+              <h3 class="mb-1 flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">
+                <span>${tier}</span><span class="font-normal normal-case tracking-normal text-dim/70">${why}</span>
+                <span class="ml-auto tabular-nums">${items.length}</span>
+              </h3>
+              <ol class="m-0 list-none p-0">${items.map((it) => html`<${Item} key=${it.source + ":" + it.id} it=${it} />`)}</ol>
+            </div>`)}
+
+        ${b.weak.length > 0 && html`
+          <details class="yaml mt-4">
+            <summary class="text-[12px] text-dim">${b.weak.length} below the confident floor — a signal, not a failure</summary>
+            <ol class="m-0 mt-1 list-none p-0">${b.weak.map((it) => html`<${Item} key=${"w:" + it.source + ":" + it.id} it=${it} />`)}</ol>
+          </details>`}
+
+        ${b.traces && b.traces.count > 0 && html`
+          <h3 class="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Sought ${b.traces.count}× by day</h3>
+          <${Sparkline} days=${b.traces.days} />`}`}
+
+      <h3 class="mb-2 mt-6 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Prior digs${keyword ? " of “" + keyword + "”" : ""}</h3>
+      ${!history ? html`<${Empty}>Reading…<//>`
+        : history.length === 0 ? html`<${Empty}>None yet${keyword ? " — this would be the first" : ""}.<//>`
+        : html`
+          <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-[12px]">
+              <thead><tr class="text-left text-dim">
+                ${["#", "when", "keyword", "friction", "who", "top", "ms"].map((h) => html`<th key=${h} class="border-b border-line px-2 py-1.5 font-semibold">${h}</th>`)}
+              </tr></thead>
+              <tbody>
+                ${history.map((d) => html`
+                  <tr key=${d.dig_seq} class="align-top">
+                    <td class="border-b border-line px-2 py-1.5 tabular-nums text-dim">${d.dig_seq}</td>
+                    <td class="whitespace-nowrap border-b border-line px-2 py-1.5 tabular-nums text-dim">${when(d.at)}</td>
+                    <td class="border-b border-line px-2 py-1.5"><a href=${"#/dig/" + encodeURIComponent(d.keyword)} class="text-ink no-underline hover:text-ember">${d.keyword}</a></td>
+                    <td class="border-b border-line px-2 py-1.5"><span class=${"rounded-full px-2 py-0.5 text-[11px] " + frictionCls(d.friction)}>${d.friction} · ${d.confidence}</span></td>
+                    <td class="border-b border-line px-2 py-1.5 font-mono text-dim">${who(d) || "—"}</td>
+                    <td class="border-b border-line px-2 py-1.5 tabular-nums">${(d.top || []).length}</td>
+                    <td class="border-b border-line px-2 py-1.5 tabular-nums">${d.took_ms}</td>
+                  </tr>`)}
+              </tbody>
+            </table>
+          </div>`}
+    <//>`;
+}
+
+/** #/traces — the raw log, windowed; the owner's view. */
+function TracesView({ data, window, setWindow }) {
+  return html`
+    <${Panel} view="traces" title="Traces" action=${html`<${WindowToggle} value=${window} onChange=${setWindow} />`}>
+      ${!data ? html`<${Empty}>Reading…<//>`
+        : data.error ? html`<${Empty}>${data.error} — the raw log is owner-session and api-token only; an HA user reads their own rows under #/trace/‹keyword›.<//>`
+        : data.traces.length === 0 ? html`<${Empty}>Nothing traced in this window.<//>`
+        : html`
+          <${TraceTable} rows=${data.traces} subject=${true} />
+          <p class="mb-0 mt-3 text-[11px] leading-5 text-dim">
+            ${data.traces.length} row${data.traces.length === 1 ? "" : "s"}, newest first (<code class="font-mono">at DESC, rowid DESC</code>), ${window}.
+            Reads of this page are not traced — an observation must not observe itself.
+          </p>`}
+    <//>`;
+}
+
+/** Settings: what /api/health says about the janitor and retention. */
+function Housekeeping({ health }) {
+  const hk = health.housekeeping;
+  const ret = health.retention || {};
+  return html`
+    <div class="mb-3 flex flex-wrap gap-x-7 gap-y-3">
+      ${[["nodes", health.nodes], ["traces", health.traces], ["digs", health.digs], ["migrations", health.migrations]].map(([label, value]) => html`
+        <div key=${label}>
+          <b class="block text-[20px] font-semibold tabular-nums leading-tight">${value ?? 0}</b>
+          <span class="text-[11px] text-dim">${label}</span>
+        </div>`)}
+    </div>
+    <h3 class="mb-1 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Retention</h3>
+    <div class="mb-3 flex flex-wrap gap-1.5">
+      ${Object.entries(ret).map(([k, v]) => html`
+        <span key=${k} class="rounded-full bg-chip px-2 py-0.5 font-mono text-[11px]">${k}<span class="ml-1 tabular-nums opacity-60">${String(v)}</span></span>`)}
+    </div>
+    <h3 class="mb-1 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Janitor</h3>
+    ${!hk
+      ? html`<${Empty}>Has not run yet — it runs on a schedule after boot and reports here.<//>`
+      : html`
+        <div class="grid gap-1 text-[12px]">
+          <div class="flex flex-wrap gap-x-4 gap-y-1 text-dim">
+            <span>last <span class="tabular-nums text-ink">${hk.last_at ? when(hk.last_at) : "—"}</span></span>
+            <span>next <span class="tabular-nums text-ink">${hk.next_at ? when(hk.next_at) : "—"}</span></span>
+            <span>free <span class="tabular-nums text-ink">${hk.data_free_mb ?? "—"}</span> MB</span>
+            ${hk.warned && html`<span class="rounded-full bg-clay/20 px-2 py-0.5 text-clay">warned</span>`}
+          </div>
+          ${hk.evicted && html`<div><span class="text-dim">evicted</span> <${Yaml} raw=${JSON.stringify(hk.evicted)} /></div>`}
+          ${hk.errors && (Array.isArray(hk.errors) ? hk.errors.length > 0 : true) && html`<div class="text-clay"><${Yaml} raw=${JSON.stringify(hk.errors)} /></div>`}
+        </div>`}
+    ${(health.protocol_versions_seen || []).length > 0 && html`
+      <h3 class="mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[.08em] text-dim">Protocol versions seen</h3>
+      <div class="flex flex-wrap gap-1.5">
+        ${health.protocol_versions_seen.map((p) => html`<span key=${p} class="rounded-full bg-chip px-2 py-0.5 font-mono text-[11px]">${p}</span>`)}
+      </div>`}`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

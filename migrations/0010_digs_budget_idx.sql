@@ -1,0 +1,18 @@
+-- The dig budget (PRD §3.3, §3.6): DIG.budgetCount / DIG.budgetOldest ask
+-- "how many digs has this method:principal done since a cutoff" on EVERY dig
+-- (digRetryAfter, dig.ts) — and until now had no index built for that
+-- question. `digs_kw` (0009) is keyed on `keyword_norm`, not `(method,
+-- principal)`, so the budget check `SCAN`ned the whole table.
+--
+-- Measured, not guessed: the 1b-6 perf fixture (`scripts/perf.ts`) ran
+-- `EXPLAIN QUERY PLAN` on both statements against 52 000 `digs` rows and got
+-- `SCAN digs` on each — the one gap in "must show index use — SEARCH not
+-- SCAN on traces/trace_days/digs" (PRD §8.1b, §10). `digs` is capped at
+-- 50 000 (§3.8), so the scan is bounded, but it is exactly one of the three
+-- tables the requirement names, and every dig pays for it, not only a rare
+-- read.
+--
+-- `(method, principal, at DESC)`: equality on the first two columns, a range
+-- on the third, and it satisfies `ORDER BY at DESC` for `budgetOldest`
+-- without a separate sort step — the same shape as `traces_princ` (0008).
+CREATE INDEX IF NOT EXISTS digs_budget ON digs(method, principal, at DESC);
