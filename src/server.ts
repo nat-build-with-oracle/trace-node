@@ -6,6 +6,10 @@
  * sits the `Store` port, which is the whole reason nothing else changes.
  *
  *   DB_PATH                    where the corpus lives          (default ./trace.db)
+ *   JOURNAL_MODE               auto | wal | delete             (default auto — probe the
+ *                              volume in a child process first, WAL if it answers in time,
+ *                              rollback journal if it hangs; trace-node#1)
+ *   WAL_PROBE_TIMEOUT_MS       the probe's deadline            (default 3000)
  *   PORT                       what to listen on               (default 8099)
  *   HOST                       bind address                    (default 0.0.0.0)
  *   INSTANCE_NAME              shown in the page header
@@ -41,7 +45,7 @@ import { createApp } from "./app";
 import { bootProblem } from "./boot";
 import { adminChecker, HA_CORE_WEBSOCKET, readAdminIds } from "./ha-admin";
 import { startJanitor } from "./janitor";
-import { openSqliteStore } from "./store/sqlite";
+import { openSqliteStore, parseJournalMode } from "./store/sqlite";
 import { FORWARDED_HEADERS, ipInCidrs, parseCidrs, PEER_IP_HEADER } from "./utils";
 import { VERSION } from "./version";
 
@@ -84,7 +88,16 @@ const dbPath = env.DB_PATH ?? "./trace.db";
 const migrationsDir = env.MIGRATIONS_DIR ?? join(import.meta.dir, "..", "migrations");
 
 const files = migrations(migrationsDir);
-const store = await openSqliteStore(dbPath, files);
+if (env.JOURNAL_MODE !== undefined && parseJournalMode(env.JOURNAL_MODE) === undefined) {
+  console.error(`trace-node: JOURNAL_MODE must be auto, wal or delete (got ${JSON.stringify(env.JOURNAL_MODE)}); refusing to start.`);
+  process.exit(1);
+}
+const probeTimeout = Number(env.WAL_PROBE_TIMEOUT_MS);
+const store = await openSqliteStore(dbPath, files, {
+  journalMode: parseJournalMode(env.JOURNAL_MODE),
+  probeTimeoutMs: Number.isFinite(probeTimeout) && probeTimeout > 0 ? Math.trunc(probeTimeout) : undefined,
+  log: console.log,
+});
 
 // Rule 7 (§6.3, §6.4): the SQLite this bun bundles must answer the functions
 // the cloud ranking relies on. Stated at boot rather than discovered on the
