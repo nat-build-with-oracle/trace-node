@@ -4,6 +4,50 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__INSTANCE__ · trace-node</title>
+<!-- Kept in step with the chosen theme by the script below: the browser reads
+     this for the surfaces the page does not draw — form controls, the band
+     under an overscroll, the default canvas before any CSS applies. -->
+<meta name="color-scheme" content="dark light">
+
+<!--
+  Pre-paint. This runs BEFORE the stylesheet below is parsed, which is the whole
+  point: the theme has to be on <html> before the first paint or a reload of a
+  paper-themed page flashes the dark ground for a frame. Anything later — the
+  end of <head>, the top of <body>, React's first render — is too late.
+
+  It is a deliberate duplicate of applyTheme() in the app script. This copy must
+  run with NO dependencies (no React, no htm, no CDN), so it repeats the theme
+  list rather than importing one, and test/theme.test.ts asserts the two lists
+  and the CSS blocks still name the same themes.
+-->
+<script>
+  (function () {
+    // The four token blocks in the stylesheet, and what each one is.
+    var SCHEME = { ember: "dark", daylight: "light", slate: "dark", paper: "light" };
+    var choice = "system";
+    // Shared HA origin under ingress: every key this page owns is __tn_-prefixed.
+    try {
+      var stored = localStorage.getItem("__tn_theme");
+      // hasOwnProperty, not `SCHEME[stored]`: a plain object inherits from
+      // Object.prototype, so a bare truthiness test accepts "constructor",
+      // "toString" and "__proto__" as theme names — which paints an unstyled
+      // data-theme and writes "function Object() { … }" into the meta. Under HA
+      // ingress every add-on shares one origin, so the key is writable by
+      // neighbours; the __tn_ prefix is a naming convention, not isolation.
+      if (stored === "system" || Object.prototype.hasOwnProperty.call(SCHEME, stored)) choice = stored;
+    } catch (e) {}
+    var dark = true;
+    try { dark = matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) {}
+    // "system" is a choice, not a theme: it resolves here, so CSS never has to
+    // carry a media query that a chosen theme would then have to fight.
+    var theme = choice === "system" ? (dark ? "ember" : "daylight") : choice;
+    var root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+    root.setAttribute("data-theme-choice", choice);
+    var meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.setAttribute("content", SCHEME[theme]);
+  })();
+</script>
 
 <!--
   This is a real .html file, imported by page.ts as text.
@@ -21,9 +65,9 @@
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
-  // The palette is CSS custom properties, not Tailwind literals, so the
-  // light/dark swap stays one media query instead of a `dark:` prefix on every
-  // element. Tailwind just names them.
+  // The palette is CSS custom properties, not Tailwind literals, so a theme is
+  // one token block in the stylesheet instead of a `dark:` prefix on every element —
+  // which is also why five themes cost no markup at all. Tailwind just names them.
   tailwind.config = {
     theme: {
       extend: {
@@ -41,8 +85,10 @@
         },
         borderRadius: { cozy: "14px" },
         boxShadow: {
-          // Offset and soft blur, tinted warm. A zero-offset halo is decoration.
-          lamp: "0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45)",
+          // Offset and soft blur, tinted to the theme's own ground. A zero-offset
+          // halo is decoration. The tint is a token because a shadow mixed for a
+          // warm charcoal reads as dirt on paper — see --shadow-lamp per theme.
+          lamp: "var(--shadow-lamp)",
         },
       },
     },
@@ -61,21 +107,103 @@
     warm charcoal and the accent is an ember rather than a status LED.
 
     Dark is the DEFAULT, picked from that scene rather than from category habit.
+    The other themes are alternatives to it, never a replacement for it.
+
+    ── the contract ──
+    Every block below sets the SAME eleven tokens. Nothing on this page names a
+    colour; a theme is a value swap, so a theme cannot half-apply and a new one
+    is a block, not a sweep through the markup. `system` is not a block — the
+    pre-paint script in <head> resolves it to ember or daylight from
+    prefers-color-scheme. That is why the old @media (prefers-color-scheme:
+    light) block is gone: a media query cannot be overruled by a person, and a
+    chosen theme has to beat the operating system.
+
+    ── the numbers ──
+    Above each block: WCAG 2.1 contrast ratios (sRGB relative luminance) of
+    every text token against every ground it is actually painted on — the page
+    body, a panel, a chip. The floor is 4.5:1, AA for normal text, and every
+    pair here clears it; test/theme.test.ts recomputes them from this CSS so
+    the numbers cannot rot into decoration. Two daylight values moved to get
+    there: its ember was 4.37:1 on the page ground and its sage 4.33:1, both
+    below the floor since the light block was written.
   */
+
+  /* The default — no data-theme at all: JS off, the attribute lost, the page
+     opened as a file. Identical to ember by construction (theme.test.ts asserts
+     the two blocks are the same values), so the identity survives a page whose
+     script never ran. */
   :root {
     --ground:#16130f; --panel:#1e1a15; --line:#312a22; --ink:#efe7da;
     --dim:#a99e8d;            /* tinted from the ground's hue — never gray */
     --ember:#e0a458; --sage:#8fbf7f; --clay:#e58e7c; --chip:#272019;
     --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(224,164,88,.10), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45);
     color-scheme: dark;
   }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --ground:#f7f2e7; --panel:#fffdf8; --line:#e6dcc8; --ink:#2b2419;
-      --dim:#6f6453; --ember:#a2621d; --sage:#4f7d43; --clay:#a5482f; --chip:#f1e9d9;
-      --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(162,98,29,.07), transparent 70%);
-      color-scheme: light;
-    }
+
+  /* ember — the lamp-lit dark this page was designed in.
+                ground  panel   chip
+     ink        15.09   14.10   13.09
+     dim         7.02    6.56    6.09
+     ember       8.48    7.93    7.36
+     sage        8.75    8.18    7.60
+     clay        7.49    7.00    6.50   */
+  :root[data-theme="ember"] {
+    --ground:#16130f; --panel:#1e1a15; --line:#312a22; --ink:#efe7da;
+    --dim:#a99e8d;
+    --ember:#e0a458; --sage:#8fbf7f; --clay:#e58e7c; --chip:#272019;
+    --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(224,164,88,.10), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45);
+    color-scheme: dark;
+  }
+
+  /* daylight — the same room with the curtains open. Was the @media light
+     block; the ember and sage are darker than they were, to clear 4.5:1.
+                ground  panel   chip
+     ink        13.74   15.09   13.06
+     dim         5.19    5.70    4.93
+     ember       5.36    5.89    5.09
+     sage        5.17    5.68    4.91
+     clay        5.27    5.79    5.01   */
+  :root[data-theme="daylight"] {
+    --ground:#f7f2e7; --panel:#fffdf8; --line:#e6dcc8; --ink:#2b2419;
+    --dim:#6f6453;
+    --ember:#8f5615; --sage:#46703a; --clay:#a5482f; --chip:#f3ecdf;
+    --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(143,86,21,.07), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(70,52,24,.08), 0 8px 24px -12px rgba(70,52,24,.22);
+    color-scheme: light;
+  }
+
+  /* slate — cool blue-grey, for a screen that is not the only light in the room.
+                ground  panel   chip
+     ink        13.18   11.75   10.17
+     dim         7.05    6.29    5.45
+     ember       8.43    7.51    6.51
+     sage        8.78    7.83    6.78
+     clay        6.53    5.83    5.04   */
+  :root[data-theme="slate"] {
+    --ground:#1b2430; --panel:#222d3a; --line:#34404f; --ink:#e7ecf2;
+    --dim:#9fb0c2;            /* tinted blue, the way ember's dim is tinted warm */
+    --ember:#f0b35b; --sage:#8fd19e; --clay:#f28b7d; --chip:#2b3746;
+    --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(240,179,91,.09), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(6,10,16,.28), 0 8px 24px -12px rgba(6,10,16,.50);
+    color-scheme: dark;
+  }
+
+  /* paper — warm white, near-print, for reading a corpus in daylight.
+                ground  panel   chip
+     ink        16.15   17.27   15.31
+     dim         5.68    6.07    5.39
+     ember       5.06    5.41    4.80
+     sage        4.84    5.18    4.59
+     clay        5.86    6.27    5.55   */
+  :root[data-theme="paper"] {
+    --ground:#fbf7ee; --panel:#ffffff; --line:#e2d9c6; --ink:#1f1a14;
+    --dim:#6b6152;
+    --ember:#9a5b16; --sage:#3f7a3a; --clay:#a1432a; --chip:#f5f1e7;
+    --lamp: radial-gradient(60rem 22rem at 22% -8rem, rgba(154,91,22,.06), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(52,44,28,.07), 0 8px 24px -12px rgba(52,44,28,.18);
+    color-scheme: light;
   }
 
   body { background: var(--lamp), var(--ground); background-attachment: fixed; }
@@ -138,6 +266,48 @@ const post = (url, data) =>
   j(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
 
 const when = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+
+// ── themes ───────────────────────────────────────────────────────────────────
+// The switch writes exactly one thing: data-theme on <html>, which picks a token
+// block in <style>. Nothing else on the page learns that themes exist.
+//
+// "system" is a CHOICE, not a theme: it is what gets stored, and it resolves to
+// ember or daylight — at load, in the pre-paint script in <head>, and again here
+// whenever the OS flips while the page is open. Storing the RESOLVED name
+// instead would freeze whichever side of the flip the person happened to be on.
+const THEMES = ["system", "ember", "daylight", "slate", "paper"];
+const THEME_SCHEME = { ember: "dark", daylight: "light", slate: "dark", paper: "light" };
+const THEME_ABOUT = {
+  system: "follow the operating system — ember when it is dark, daylight when it is light",
+  ember: "the lamp-lit dark this page was designed in",
+  daylight: "the same room with the curtains open",
+  slate: "cool blue-grey, dark",
+  paper: "warm white, near-print",
+};
+// Shared HA origin under ingress (PRD §3.7): every key this page owns is
+// __tn_-prefixed. The pre-paint script reads this same key, spelt out there.
+const THEME_KEY = "__tn_theme";
+const prefersDark = () => {
+  try { return matchMedia("(prefers-color-scheme: dark)").matches; } catch { return true; }
+};
+const resolveTheme = (choice) => (choice === "system" ? (prefersDark() ? "ember" : "daylight") : choice);
+function applyTheme(choice) {
+  const theme = resolveTheme(choice);
+  const root = document.documentElement;
+  root.setAttribute("data-theme", theme);
+  root.setAttribute("data-theme-choice", choice);
+  // What the BROWSER paints and this page does not: form controls, the band
+  // under an overscroll. Left behind, a light theme keeps dark scrollbars.
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (meta) meta.setAttribute("content", THEME_SCHEME[theme] || "dark");
+}
+const readTheme = () => {
+  try {
+    const stored = localStorage.getItem(THEME_KEY);
+    if (THEMES.includes(stored)) return stored;
+  } catch {}
+  return "system";
+};
 
 // ── the call log, as YAML ────────────────────────────────────────────────────
 // A double-encoded JSON string in a table cell is unreadable by a human, which
@@ -254,6 +424,37 @@ const WindowToggle = ({ value, onChange, windows }) => html`
       </button>`)}
   </span>`;
 
+// The theme switch, in the header beside Lock and settings — a view choice
+// belongs where the other things about THIS browser live, not inside settings,
+// which is about the corpus.
+//
+// A segmented control is a row of toggles, so each button carries aria-pressed
+// rather than the group carrying a value; that is also what a screen reader
+// reads out as "system, pressed". Tab reaches the group and Enter/Space picks —
+// ← → walk it as well, because a control laid out as one strip is one control
+// to a hand on the keyboard.
+const ThemeSwitch = ({ value, onChange }) => {
+  const onKeyDown = (e) => {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const buttons = [...e.currentTarget.querySelectorAll("button")];
+    const at = buttons.indexOf(document.activeElement);
+    buttons[(at + step + buttons.length) % buttons.length].focus();
+  };
+  return html`
+    <div role="group" aria-label="Theme" onKeyDown=${onKeyDown}
+         class="flex items-center gap-0.5 rounded-lg border border-line p-0.5">
+      ${THEMES.map((t) => html`
+        <button key=${t} type="button" data-theme-name=${t} aria-pressed=${value === t}
+                onClick=${() => onChange(t)} title=${THEME_ABOUT[t]}
+                class=${"rounded-md px-2 py-1 text-[12px] transition " +
+                  (value === t ? "bg-chip text-ember" : "text-dim hover:text-ink")}>
+          ${t}
+        </button>`)}
+    </div>`;
+};
+
 // An ISO instant for `since=` on /api/traces; "" means no cutoff.
 const sinceIso = (w) =>
   w === "24h" ? new Date(Date.now() - 864e5).toISOString()
@@ -328,6 +529,10 @@ function App() {
   // keywords on one scale. /api/cloud is untraced by construction, so the
   // page may poll it freely; the window is a view choice, kept in localStorage
   // under the shared-origin prefix.
+  // The chosen theme — "system" or one of the four blocks. Seeded from storage
+  // by the same rule the pre-paint script used, so the first render agrees with
+  // what is already on <html> and the switch never contradicts the page.
+  const [theme, setTheme] = useState(readTheme);
   const [cloud, setCloud] = useState(null);
   const [cloudWindow, setCloudWindow] = useState(() => {
     try { return localStorage.getItem("__tn_cloud_window") || "7d"; } catch { return "7d"; }
@@ -494,6 +699,22 @@ function App() {
       setAccessMsg({ kind: "err", text: e.message });
     }
   };
+
+  // Apply and persist the choice. While it is "system" the page keeps listening
+  // to the OS: a laptop that flips to dark at sunset flips the page with it,
+  // which is the whole promise of that option.
+  useEffect(() => {
+    applyTheme(theme);
+    try { localStorage.setItem(THEME_KEY, theme); } catch {}
+    if (theme !== "system") return;
+    let mq;
+    try { mq = matchMedia("(prefers-color-scheme: dark)"); } catch { return; }
+    const onFlip = () => applyTheme("system");
+    mq.addEventListener ? mq.addEventListener("change", onFlip) : mq.addListener(onFlip);
+    return () => {
+      mq.removeEventListener ? mq.removeEventListener("change", onFlip) : mq.removeListener(onFlip);
+    };
+  }, [theme]);
 
   useEffect(() => {
     const onHash = () => setRoute(readRoute());
@@ -765,6 +986,7 @@ function App() {
             <a key=${label} href=${href}
                class=${"no-underline transition " + (kinds.includes(route.kind) ? "text-ember" : "text-dim hover:text-ember")}>${label}</a>`)}
         </nav>
+        <${ThemeSwitch} value=${theme} onChange=${setTheme} />
         <a href=${settingsOpen ? "#/" : "#/settings"}
            class=${"rounded-lg border px-2.5 py-1 text-[12px] no-underline transition " +
              (settingsOpen ? "border-ember/60 text-ember" : "border-line text-dim hover:border-ember/60 hover:text-ember")}>
