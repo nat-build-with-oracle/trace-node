@@ -15,6 +15,34 @@
  */
 
 import type { RunResult, Store } from "./types";
+import { DEFAULT_WAL_PROBE_TIMEOUT_MS, walProbe, type WalProbeResult } from "./wal-probe";
+
+/**
+ * How the journal mode is chosen for a FILE store (`:memory:` ignores this):
+ *
+ *   auto    probe the volume first (wal-probe.ts); WAL if it answers in time,
+ *           DELETE — SQLite's default rollback journal — if it hangs or fails.
+ *           The default, and the only mode that is safe on a host nobody has
+ *           tested yet (trace-node#1).
+ *   wal     set WAL without asking. For hosts already known good, or tests.
+ *   delete  never touch WAL. For a host already known bad.
+ */
+export type JournalMode = "auto" | "wal" | "delete";
+
+export interface OpenSqliteOptions {
+  journalMode?: JournalMode;
+  /** Passed to the probe in `auto` mode. Default 3000. */
+  probeTimeoutMs?: number;
+  /** Where the decision is reported. Default: silent. server.ts passes console.log. */
+  log?: (line: string) => void;
+  /** Test seam: replaces the child-process probe. */
+  probe?: (dbPath: string, timeoutMs: number) => Promise<WalProbeResult>;
+}
+
+export function parseJournalMode(value: string | undefined): JournalMode | undefined {
+  const v = (value ?? "").trim().toLowerCase();
+  return v === "auto" || v === "wal" || v === "delete" ? v : undefined;
+}
 
 export interface SqliteLike {
   query(sql: string): {
@@ -80,22 +108,48 @@ export function sqliteStore(database: SqliteLike): Store {
 export async function openSqliteStore(
   path: string,
   migrations: Array<string | { name: string; sql: string }> = [],
+  options: OpenSqliteOptions = {},
 ): Promise<Store> {
   const { Database } = (await import("bun:sqlite")) as {
     Database: new (path: string) => SqliteLike & { exec(sql: string): void };
   };
+
+  // Decide the journal mode BEFORE the corpus is opened. The probe runs against
+  // a scratch file in the same directory, in a child process with a deadline —
+  // the one thing this thread cannot do for itself once `PRAGMA journal_mode =
+  // WAL` has blocked it (trace-node#1). `:memory:` has no volume to probe and
+  // answers `memory` whatever is asked; the janitor test asserts that split.
+  const log = options.log ?? (() => {});
+  const isMemory = path === ":memory:" || path === "";
+  let mode: JournalMode = options.journalMode ?? "auto";
+  if (!isMemory && mode === "auto") {
+    const timeoutMs = options.probeTimeoutMs ?? DEFAULT_WAL_PROBE_TIMEOUT_MS;
+    const probed = await (options.probe ?? ((p, t) => walProbe(p, { timeoutMs: t })))(path, timeoutMs);
+    mode = probed.ok ? "wal" : "delete";
+    log(
+      probed.ok
+        ? `trace-node: journal_mode=wal (WAL probe ${probed.reason})`
+        : `trace-node: journal_mode=delete — WAL probe ${probed.reason}; falling back to the rollback journal (trace-node#1)`,
+    );
+  } else if (!isMemory) {
+    log(`trace-node: journal_mode=${mode} (JOURNAL_MODE set, probe skipped)`);
+  }
+
   const database = new Database(path);
   // Foreign keys are OFF by default in SQLite — the ON DELETE CASCADE rules in
   // the schema are inert without this, and node_terms rows would outlive their
   // nodes. D1 enables them for you; a local file does not.
   database.exec("PRAGMA foreign_keys = ON");
   // WAL and a busy timeout (PRD §3.8): the janitor deletes in bulk every ten
-  // minutes on a live file, and readers must not queue behind it. On
-  // `:memory:` SQLite answers `memory` to the first pragma and that is fine —
-  // the test asserts exactly that split. A checkpoint after a big eviction is
-  // only meaningful because of this line.
-  database.exec("PRAGMA journal_mode = WAL");
+  // minutes on a live file, and readers must not queue behind it. A checkpoint
+  // after a big eviction is only meaningful under WAL; under DELETE it is a
+  // harmless no-op. DELETE is also what converts a file that an earlier, WAL-
+  // capable host left in WAL mode back to a rollback journal.
+  // busy_timeout FIRST: switching journal mode takes an exclusive lock, and a
+  // second handle on the same file (a CLI beside the server) should wait its
+  // turn, not fail with SQLITE_BUSY.
   database.exec("PRAGMA busy_timeout = 5000");
+  database.exec(mode === "delete" ? "PRAGMA journal_mode = DELETE" : "PRAGMA journal_mode = WAL");
 
   /**
    * Each migration runs AT MOST ONCE, tracked in a table.
