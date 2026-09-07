@@ -16,26 +16,83 @@ import { escapeHtml } from "./utils";
 
 const SHELL = `
   /*
-    The same warm, lamp-lit world as the app.
-    
+    The same warm, lamp-lit world as the app — and now the same four themes.
+
     These screens were left on the old blue-slate palette when the app moved,
     which made the FIRST thing any visitor loads the one thing that did not look
     like the product. An entry screen that disagrees with what is behind it reads
-    as two different pieces of software.
+    as two different pieces of software. The same argument applied again when the
+    app gained themes and these screens did not: someone reading their corpus on
+    \`paper\` pressed Lock and landed on a dark screen, and the light palette left
+    here still carried the ember (#a2621d) the app had already moved off because
+    it computes to 4.37:1 under the submit button's own text.
+
+    So: the SAME token blocks as page.html, keyed the same way, read from the
+    same __tn_theme key by the same pre-paint script (in shell() below).
+
+    The @media block stays, unlike in the app — these screens must work with
+    JavaScript off (that is the whole reason this file exists apart from
+    page.ts), so the OS decides when nothing else can. A stored choice still
+    wins: [data-theme] is (0,2,0) to the media block's (0,1,0), and a media
+    query adds no specificity of its own.
+
+    Ratios below are WCAG 2.1 on the sRGB hex, recomputed in test/theme.test.ts.
+    The pairs these screens actually paint are ink/dim on ground and panel, and
+    — the one the old light block failed — the submit button, which is
+    --ground on --ember.
   */
+
+  /* ember · ink 15.09/14.10 · dim 7.02/6.56 · ember 8.48/7.93 · clay 7.49/7.00
+             · button (ground on ember) 8.48 */
   :root {
     --ground:#16130f; --panel:#1e1a15; --line:#312a22; --ink:#efe7da;
     --dim:#a99e8d; --ember:#e0a458; --clay:#e58e7c;
     --lamp: radial-gradient(50rem 20rem at 50% -6rem, rgba(224,164,88,.12), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45);
     color-scheme: dark;
   }
+  /* daylight · ink 13.74/15.09 · dim 5.19/5.70 · ember 5.36/5.89 · clay 5.27/5.79
+                · button 5.36 — was 4.37 with the old #a2621d */
   @media (prefers-color-scheme: light) {
     :root {
       --ground:#f7f2e7; --panel:#fffdf8; --line:#e6dcc8; --ink:#2b2419;
-      --dim:#6f6453; --ember:#a2621d; --clay:#a5482f;
-      --lamp: radial-gradient(50rem 20rem at 50% -6rem, rgba(162,98,29,.09), transparent 70%);
+      --dim:#6f6453; --ember:#8f5615; --clay:#a5482f;
+      --lamp: radial-gradient(50rem 20rem at 50% -6rem, rgba(143,86,21,.09), transparent 70%);
+      --shadow-lamp: 0 1px 2px rgba(70,52,24,.08), 0 8px 24px -12px rgba(70,52,24,.22);
       color-scheme: light;
     }
+  }
+  :root[data-theme="ember"] {
+    --ground:#16130f; --panel:#1e1a15; --line:#312a22; --ink:#efe7da;
+    --dim:#a99e8d; --ember:#e0a458; --clay:#e58e7c;
+    --lamp: radial-gradient(50rem 20rem at 50% -6rem, rgba(224,164,88,.12), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45);
+    color-scheme: dark;
+  }
+  :root[data-theme="daylight"] {
+    --ground:#f7f2e7; --panel:#fffdf8; --line:#e6dcc8; --ink:#2b2419;
+    --dim:#6f6453; --ember:#8f5615; --clay:#a5482f;
+    --lamp: radial-gradient(50rem 20rem at 50% -6rem, rgba(143,86,21,.09), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(70,52,24,.08), 0 8px 24px -12px rgba(70,52,24,.22);
+    color-scheme: light;
+  }
+  /* slate · ink 13.18/11.75 · dim 7.05/6.29 · ember 8.43/7.51 · clay 6.53/5.83
+           · button 8.43 */
+  :root[data-theme="slate"] {
+    --ground:#1b2430; --panel:#222d3a; --line:#34404f; --ink:#e7ecf2;
+    --dim:#9fb0c2; --ember:#f0b35b; --clay:#f28b7d;
+    --lamp: radial-gradient(50rem 20rem at 50% -6rem, rgba(240,179,91,.11), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(6,10,16,.28), 0 8px 24px -12px rgba(6,10,16,.50);
+    color-scheme: dark;
+  }
+  /* paper · ink 16.15/17.27 · dim 5.68/6.07 · ember 5.06/5.41 · clay 5.86/6.27
+           · button 5.06 */
+  :root[data-theme="paper"] {
+    --ground:#fbf7ee; --panel:#ffffff; --line:#e2d9c6; --ink:#1f1a14;
+    --dim:#6b6152; --ember:#9a5b16; --clay:#a1432a;
+    --lamp: radial-gradient(50rem 20rem at 50% -6rem, rgba(154,91,22,.08), transparent 70%);
+    --shadow-lamp: 0 1px 2px rgba(52,44,28,.07), 0 8px 24px -12px rgba(52,44,28,.18);
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
   body { font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -43,7 +100,7 @@ const SHELL = `
          background: var(--lamp), var(--ground); color: var(--ink); padding: 24px; }
   form { width: 100%; max-width: 26rem; background: var(--panel);
          border: 1px solid var(--line); border-radius: 14px; padding: 28px;
-         box-shadow: 0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45); }
+         box-shadow: var(--shadow-lamp); }
   h1 { font-size: 1.05rem; margin: 0 0 4px; letter-spacing: .01em; }
   p  { color: var(--dim); margin: 0 0 20px; font-size: .9rem; }
   .strong { color: var(--ink); font-weight: 600; }
@@ -64,7 +121,7 @@ const SHELL = `
   .meta { margin: 0 0 20px; font-size: .78rem; color: var(--dim); }
   .card { width: 100%; max-width: 26rem; background: var(--panel);
          border: 1px solid var(--line); border-radius: 14px; padding: 28px;
-         box-shadow: 0 1px 2px rgba(20,14,6,.20), 0 8px 24px -12px rgba(20,14,6,.45); }
+         box-shadow: var(--shadow-lamp); }
   .id { display: flex; gap: 8px; align-items: center; margin: 0 0 16px; }
   .id code { flex: 1; padding: 9px 12px; border-radius: 9px; background: var(--ground);
          border: 1px solid var(--line); font-size: .9rem; overflow-wrap: anywhere; }
@@ -74,10 +131,45 @@ const SHELL = `
   :focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
 `;
 
+/**
+ * The theme pre-paint, third copy (page.html's <head> and its app script hold
+ * the other two). It is duplicated rather than shared for the same reason the
+ * page's copy is: it must run with no bundler, no module, and no dependency,
+ * before the stylesheet is parsed. test/theme.test.ts asserts all three copies
+ * still name the same themes.
+ *
+ * Nothing here is required for these screens to work — with JS off the @media
+ * block in SHELL decides, exactly as before. This only lets a person's stored
+ * choice beat the operating system, so that pressing Lock from `paper` does not
+ * land on a dark screen.
+ *
+ * `hasOwnProperty`, not `SCHEME[stored]`: a bare truthiness test on an object
+ * literal accepts "constructor" and "__proto__" as theme names, and the shared
+ * HA-ingress origin means a neighbour add-on can write this key.
+ */
+const PREPAINT = `
+  (function () {
+    var SCHEME = { ember: "dark", daylight: "light", slate: "dark", paper: "light" };
+    var choice = "system";
+    try {
+      var stored = localStorage.getItem("__tn_theme");
+      if (stored === "system" || Object.prototype.hasOwnProperty.call(SCHEME, stored)) choice = stored;
+    } catch (e) {}
+    if (choice === "system") return;   // leave the @media block in charge
+    var root = document.documentElement;
+    root.setAttribute("data-theme", choice);
+    root.setAttribute("data-theme-choice", choice);
+    var meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.setAttribute("content", SCHEME[choice]);
+  })();
+`;
+
 const shell = (title: string, form: string): string => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title>
+<meta name="color-scheme" content="dark light">
+<script>${PREPAINT}</script>
 <style>${SHELL}</style></head>
 <body>${form}</body></html>`;
 

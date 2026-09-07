@@ -28,7 +28,13 @@
     // Shared HA origin under ingress: every key this page owns is __tn_-prefixed.
     try {
       var stored = localStorage.getItem("__tn_theme");
-      if (stored === "system" || SCHEME[stored]) choice = stored;
+      // hasOwnProperty, not `SCHEME[stored]`: a plain object inherits from
+      // Object.prototype, so a bare truthiness test accepts "constructor",
+      // "toString" and "__proto__" as theme names — which paints an unstyled
+      // data-theme and writes "function Object() { … }" into the meta. Under HA
+      // ingress every add-on shares one origin, so the key is writable by
+      // neighbours; the __tn_ prefix is a naming convention, not isolation.
+      if (stored === "system" || Object.prototype.hasOwnProperty.call(SCHEME, stored)) choice = stored;
     } catch (e) {}
     var dark = true;
     try { dark = matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) {}

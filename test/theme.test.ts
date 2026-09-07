@@ -21,6 +21,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { page } from "../src/page";
+import { denyPage, loginPage } from "../src/screens";
 
 const html = page("themes");
 
@@ -137,6 +138,31 @@ describe("themes: contrast", () => {
     }
   });
 
+  // The other direction, which the matrix above cannot see: the page's filled
+  // controls paint the GROUND on an accent — `bg-ember text-ground` on the Dig
+  // button, the two settings submits, the consent Allow, the panel action. A
+  // text token that stays legible as text can still be a button fill nobody can
+  // read, and paper's ground-on-sage (4.84) is the tightest pair on the page.
+  const FILLS = ["ember", "sage", "clay"];
+
+  test("the filled controls really are ground-on-accent, or this matrix is guarding nothing", () => {
+    const filled = [...html.matchAll(/class="[^"]*\bbg-(ember|sage|clay)\b[^"]*"/g)]
+      .filter((m) => m[0]!.includes("text-ground"))
+      .map((m) => m[1]!);
+    expect(filled.length).toBeGreaterThan(0);
+    for (const fill of new Set(filled)) expect(FILLS).toContain(fill);
+  });
+
+  test.each(NAMED)("%s: the ground clears 4.5:1 on every accent it is painted on", (name) => {
+    const tokens = blocks.get(name)!;
+    for (const fill of FILLS) {
+      const ratio = contrast(tokens["ground"]!, tokens[fill]!);
+      expect(`${name} ground-on-${fill} ${ratio.toFixed(2)}`).toBe(
+        `${name} ground-on-${fill} ${Math.max(ratio, 4.5).toFixed(2)}`,
+      );
+    }
+  });
+
   test("the ratios written above each block are the measured ones", () => {
     // The comments are documentation that can rot; this pins them to the hex.
     for (const name of NAMED) {
@@ -174,6 +200,19 @@ describe("themes: the pre-paint script", () => {
     // localStorage must still paint.
     expect(prepaint.match(/try \{/g)?.length).toBeGreaterThanOrEqual(2);
     expect(prepaint).toContain("localStorage.getItem(\"__tn_theme\")");
+  });
+
+  test("a stored value is checked against the OWN keys, not the prototype chain", () => {
+    // `if (SCHEME[stored])` accepts "constructor", "toString" and "__proto__"
+    // as theme names: the page then paints data-theme="constructor", which no
+    // block matches, and writes `function Object() { [native code] }` into the
+    // meta. The app copy self-heals on hydration — but only if the CDN scripts
+    // arrive, so the wrong first paint is permanent when they do not.
+    expect(prepaint).toContain("Object.prototype.hasOwnProperty.call(SCHEME, stored)");
+    expect(prepaint).not.toMatch(/\|\|\s*SCHEME\[stored\]\s*\)/);
+    // The app's own copy tests membership against the literal list instead.
+    const app = scripts.find((s) => s.includes("const BASE"))!;
+    expect(app).toContain("THEMES.includes(stored)");
   });
 
   test("its theme list has not drifted from the CSS or from the app", () => {
@@ -229,5 +268,178 @@ describe("themes: the switch", () => {
     // While the choice is "system" the page keeps following the OS.
     expect(app).toContain('if (theme !== "system") return;');
     expect(app).toContain('addEventListener("change", onFlip)');
+  });
+});
+
+/**
+ * The screens in front of the app — lock, consent, ingress deny — are served by
+ * src/screens.ts with their own stylesheet, and they were left out of the theme
+ * contract when the app joined it. Two consequences, both real: the light
+ * palette here kept the ember (#a2621d) the app had already moved off because
+ * the submit button computes to 4.37:1 against it, and a person reading on
+ * `paper` who pressed Lock landed on whatever the OS preferred.
+ *
+ * These screens must keep working with JavaScript off, so the @media block
+ * stays as the fallback and the pre-paint script only overrides it for a stored
+ * choice. That is what is pinned here.
+ */
+describe("themes: the screens in front of the app", () => {
+  const shellHtml = loginPage({ instanceName: "x", base: "" });
+  const shellStyle = /<style>([\s\S]*?)<\/style>/.exec(shellHtml)![1]!;
+  const shellCss = shellStyle.replace(/\/\*[\s\S]*?\*\//g, "");
+  /** The @media (prefers-color-scheme: light) fallback, on its own. */
+  const mediaBlock = /@media \(prefers-color-scheme: light\) \{([\s\S]*?)\n  \}/.exec(shellCss)![1]!;
+  const shellBlocks = themeBlocks(shellCss.replace(mediaBlock, ""));
+  const mediaTokens = themeBlocks(mediaBlock).get("default")!;
+
+  test("it carries the same four named blocks as the app, plus the JS-off default", () => {
+    expect([...shellBlocks.keys()]).toEqual(["default", ...NAMED]);
+    // …and keeps the media query the app dropped: with no script there is
+    // nothing else to read the OS with, and no person to overrule.
+    expect(shellCss).toContain("@media (prefers-color-scheme: light)");
+  });
+
+  test("every screen theme defines every token the screen default defines", () => {
+    const expected = Object.keys(shellBlocks.get("default")!).sort();
+    for (const name of [...NAMED]) {
+      expect(`${name} ${Object.keys(shellBlocks.get(name)!).sort().join()}`).toBe(`${name} ${expected.join()}`);
+    }
+    expect(Object.keys(mediaTokens).sort()).toEqual(expected);
+  });
+
+  test("the values agree with the app's, token for token — one world, not two", () => {
+    for (const name of NAMED) {
+      for (const [token, value] of Object.entries(shellBlocks.get(name)!)) {
+        if (token === "lamp") continue; // a different geometry, deliberately: these screens are centred
+        expect(`${name} --${token}: ${value}`).toBe(`${name} --${token}: ${blocks.get(name)![token]}`);
+      }
+    }
+    // The default is ember here too, and the media fallback is daylight.
+    expect(shellBlocks.get("default")).toEqual(shellBlocks.get("ember")!);
+    for (const token of ["ground", "panel", "line", "ink", "dim", "ember", "clay"]) {
+      expect(`fallback --${token}: ${mediaTokens[token]}`).toBe(`fallback --${token}: ${blocks.get("daylight")![token]}`);
+    }
+  });
+
+  test.each([...NAMED, "fallback"])("%s: text clears 4.5:1, and so does the submit button", (name) => {
+    const tokens = name === "fallback" ? mediaTokens : shellBlocks.get(name)!;
+    // What these screens paint: text on the body ground and on the form panel…
+    for (const fg of ["ink", "dim", "ember", "clay"]) {
+      for (const bg of ["ground", "panel"]) {
+        const ratio = contrast(tokens[fg]!, tokens[bg]!);
+        expect(`${name} ${fg}-on-${bg} ${ratio.toFixed(2)}`).toBe(
+          `${name} ${fg}-on-${bg} ${Math.max(ratio, 4.5).toFixed(2)}`,
+        );
+      }
+    }
+    // …and one filled control, `background: var(--ember); color: var(--ground)`.
+    // This is the pair the old light block failed at 4.37:1.
+    const button = contrast(tokens["ground"]!, tokens["ember"]!);
+    expect(`${name} button ${button.toFixed(2)}`).toBe(`${name} button ${Math.max(button, 4.5).toFixed(2)}`);
+    expect(shellCss).toContain("background: var(--ember); color: var(--ground)");
+  });
+
+  test("the pre-paint runs before the stylesheet and reads the same key", () => {
+    const prepaint = [...shellHtml.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)]
+      .map((m) => m[1]!)
+      .find((s) => s.includes("__tn_theme"))!;
+    expect(prepaint).toBeDefined();
+    expect(shellHtml.indexOf(prepaint)).toBeLessThan(shellHtml.indexOf("<style>"));
+    expect(shellHtml).toContain('<meta name="color-scheme"');
+    expect(prepaint).toContain('localStorage.getItem("__tn_theme")');
+    expect(prepaint).toContain("try {");
+    // Same own-key check as the page's copy.
+    expect(prepaint).toContain("Object.prototype.hasOwnProperty.call(SCHEME, stored)");
+    // "system" is left to the media query here — the script must NOT set an
+    // attribute for it, or a JS-on page would freeze on whatever the OS said
+    // at load and stop following it.
+    expect(prepaint).toContain('if (choice === "system") return;');
+    // The third copy of the theme list; drift between the three is the bug.
+    const names = [...prepaint.matchAll(/(\w+): "(dark|light)"/g)].map((m) => m[1]!);
+    expect(names.sort()).toEqual([...NAMED].sort());
+  });
+
+  test("every screen gets the theme, not just the lock screen", () => {
+    const deny = denyPage({ instanceName: "x", userId: "u", userName: "n", allowlistOption: "o" });
+    for (const name of NAMED) expect(deny).toContain(`:root[data-theme="${name}"]`);
+    expect(deny).toContain("__tn_theme");
+  });
+});
+
+/**
+ * The pre-paint scripts, RUN rather than read.
+ *
+ * The two copies ship as text, so the checks above can only assert about their
+ * source. These execute the shipped text against a stub DOM — the one way to
+ * prove what a browser will actually put on <html> before the first paint.
+ *
+ * The case that made this worth writing: `if (SCHEME[stored])` accepted any
+ * key on Object.prototype, so `__tn_theme = "constructor"` painted an unstyled
+ * data-theme and stamped `function Object() { [native code] }` into the meta.
+ * The app's copy repairs it on hydration — but only if the CDN scripts arrive.
+ */
+describe("themes: the pre-paint, executed", () => {
+  type Run = { theme: string | null; choice: string | null; scheme: string | null };
+
+  /** Runs a pre-paint source with localStorage, matchMedia and document stubbed. */
+  const run = (source: string, stored: string | null, osDark: boolean): Run => {
+    const attrs: Record<string, string> = {};
+    const meta = { content: "dark light", setAttribute: (k: string, v: string) => { if (k === "content") meta.content = v; } };
+    const document = {
+      documentElement: { setAttribute: (k: string, v: string) => { attrs[k] = v; } },
+      querySelector: (sel: string) => (sel === 'meta[name="color-scheme"]' ? meta : null),
+    };
+    const localStorage = { getItem: (k: string) => (k === "__tn_theme" ? stored : null) };
+    const matchMedia = (q: string) => ({ matches: q.includes("dark") ? osDark : !osDark });
+    new Function("localStorage", "matchMedia", "document", source)(localStorage, matchMedia, document);
+    return { theme: attrs["data-theme"] ?? null, choice: attrs["data-theme-choice"] ?? null, scheme: meta.content };
+  };
+
+  const pagePrepaint = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]!)
+    .find((s) => s.includes("__tn_theme") && !s.includes("const BASE"))!;
+  const screenPrepaint = [...loginPage({ instanceName: "x", base: "" })
+    .matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]!)
+    .find((s) => s.includes("__tn_theme"))!;
+
+  test("the page paints the stored theme, and resolves `system` from the OS", () => {
+    expect(run(pagePrepaint, "paper", false)).toEqual({ theme: "paper", choice: "paper", scheme: "light" });
+    expect(run(pagePrepaint, "slate", true)).toEqual({ theme: "slate", choice: "slate", scheme: "dark" });
+    expect(run(pagePrepaint, null, true)).toEqual({ theme: "ember", choice: "system", scheme: "dark" });
+    expect(run(pagePrepaint, "system", false)).toEqual({ theme: "daylight", choice: "system", scheme: "light" });
+  });
+
+  test.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"])(
+    "a stored %s is not a theme — it falls back, and the meta stays a color-scheme",
+    (junk) => {
+      const light = run(pagePrepaint, junk, false);
+      expect(light).toEqual({ theme: "daylight", choice: "system", scheme: "light" });
+      const dark = run(pagePrepaint, junk, true);
+      expect(dark).toEqual({ theme: "ember", choice: "system", scheme: "dark" });
+    },
+  );
+
+  test("the screens paint a stored theme and leave `system` to their media query", () => {
+    expect(run(screenPrepaint, "paper", true)).toEqual({ theme: "paper", choice: "paper", scheme: "light" });
+    // No attribute for system/junk/nothing: the @media block decides, which is
+    // what keeps these screens correct with JavaScript off.
+    expect(run(screenPrepaint, null, false)).toEqual({ theme: null, choice: null, scheme: "dark light" });
+    expect(run(screenPrepaint, "system", false)).toEqual({ theme: null, choice: null, scheme: "dark light" });
+    expect(run(screenPrepaint, "constructor", false)).toEqual({ theme: null, choice: null, scheme: "dark light" });
+  });
+
+  test("neither copy throws when storage is forbidden — a private window still paints", () => {
+    const boom = { getItem: () => { throw new Error("SecurityError"); } };
+    for (const source of [pagePrepaint, screenPrepaint]) {
+      const attrs: Record<string, string> = {};
+      const document = {
+        documentElement: { setAttribute: (k: string, v: string) => { attrs[k] = v; } },
+        querySelector: () => null,
+      };
+      expect(() =>
+        new Function("localStorage", "matchMedia", "document", source)(boom, () => ({ matches: true }), document),
+      ).not.toThrow();
+    }
   });
 });
