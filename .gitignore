@@ -8,3 +8,4 @@ wrangler.local.jsonc
 *.sqlite-wal
 *.sqlite-shm
 .env
+.claude/INCUBATED_BY
